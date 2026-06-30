@@ -39,7 +39,7 @@ function buildWorld(data, lat0, lon0, radiusMi, heightAt, overture, playMi) {
 
   // ---- ground (subdivided + displaced by the terrain heightfield) ----
   const gsz = half * 2 + 200;
-  const groundMat = new THREE.MeshLambertMaterial({ color: 0x8d8e8a }); // neutral concrete grey (not brown); OSM parks draw green on top
+  const groundMat = new THREE.MeshLambertMaterial({ color: 0x6f9b4a }); // grass green base; OSM parks draw a brighter green on top
   const segs = Math.min(256, Math.max(80, Math.round(gsz / 9)));
   groundSize = gsz; groundSeg = segs;            // so surfaceHeight() matches this mesh exactly
   const gGeo = new THREE.PlaneGeometry(gsz, gsz, segs, segs);
