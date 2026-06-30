@@ -190,13 +190,17 @@ document.getElementById('newLoc').addEventListener('click', () => {
   document.getElementById('help').classList.add('hidden');
   startEl.style.display = 'flex'; map.invalidateSize(); updatePreview(); warmDuck();
 });
-// Controls button toggles the keybindings popover (next to New location).
-document.getElementById('controls').addEventListener('click', () => document.getElementById('help').classList.toggle('hidden'));
+// Controls button toggles the keybindings popover (next to New location); the FPS readout
+// rides along with it — shown only while the popover is open.
+document.getElementById('controls').addEventListener('click', () => {
+  const open = document.getElementById('help').classList.toggle('hidden') === false;
+  document.getElementById('fps').style.display = open ? 'block' : 'none';
+});
 
 function startDriving() {
   loadingEl.style.display = 'none';
   document.getElementById('topbtns').style.display = 'flex';
-  document.getElementById('fps').style.display = 'block';
+  document.getElementById('fps').style.display = 'none';     // FPS hidden until Controls is opened
   document.getElementById('help').classList.add('hidden');   // popover starts closed
   document.getElementById('dashboard').style.display = 'flex';
   resize();
