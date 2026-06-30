@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sim-Drive</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<link rel="stylesheet" href="css/main.css" />
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<!-- Map picker -->
+<div id="start">
+  <div id="map"><div class="crosshair"></div></div>
+  <div id="panel">
+    <div class="sub">Pan/search to a place, set a radius, then drive the real streets. Data: OpenStreetMap.</div>
+    <h1>Sim-Drive</h1>
+    <input id="search" placeholder="Search a place (e.g. Chicago Loop, Eiffel Tower)…" />
+    <button id="geoBtn">⌖ My location</button>
+    <div class="rad-group" id="radGroup">
+      <div class="rad" data-r="0.3">0.3 mi</div>
+      <div class="rad sel" data-r="0.5">0.5 mi</div>
+      <div class="rad" data-r="0.75">0.75 mi</div>
+      <div class="rad" data-r="1">1 mi</div>
+    </div>
+    <button id="go">Drive Here →</button>
+  </div>
+</div>
+
+<!-- Loading -->
+<div id="loading">
+  <div class="spin" id="spin"></div>
+  <div id="loadMsg">Loading…</div>
+  <div id="loadBar"><div id="loadFill"></div></div>
+  <div id="loadSub"></div>
+  <div id="loadErr"></div>
+  <button id="backBtn">← Back to map</button>
+</div>
+
+<!-- top-right buttons + Controls popover -->
+<div id="topbtns">
+  <button id="controls">⌨ Controls</button>
+  <button id="newLoc">⌖ New location</button>
+</div>
+<div id="help" class="hidden">
+  <div class="help-title">Controls</div>
+  <div class="help-row"><span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / arrows</span> <span>drive</span></div>
+  <div class="help-row"><span><kbd>Space</kbd></span> <span>brake</span></div>
+  <div class="help-row"><span><kbd>H</kbd></span> <span>horn</span></div>
+  <div class="help-row"><span><kbd>C</kbd></span> <span>camera</span></div>
+</div>
+<div id="fps"></div>
+
+<div id="dashboard">
+  <div class="dash-cluster"><canvas id="speedHud" width="200" height="200"></canvas></div>
+  <div class="dash-center">
+    <div class="info-screen"><canvas id="mini" width="176" height="176"></canvas></div>
+  </div>
+  <div class="dash-side">
+    <div class="gear-readout" id="gear">P R N <b>D</b></div>
+    <div class="vent"><i></i><i></i><i></i><i></i></div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module" src="js/bootstrap.js"></script>
+</body>
+</html>

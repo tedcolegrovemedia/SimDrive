@@ -1,0 +1,13 @@
+/* ---------- In-game overlay: top-right buttons + Controls popover ---------- */
+#topbtns { position: fixed; top: 14px; right: 16px; z-index: 7; display: none; gap: 8px; }
+#topbtns button { padding: 7px 13px; border-radius: 8px; border: 1px solid rgba(255,255,255,.25);
+  background: rgba(0,0,0,.4); color: #fff; cursor: pointer; font-size: 12px; font-family: inherit; }
+#topbtns button:hover { background: rgba(0,0,0,.62); }
+#help { position: fixed; top: 52px; right: 16px; z-index: 7; color: #fff; font-size: 12px; line-height: 1.5;
+  background: rgba(15,18,24,.88); border: 1px solid rgba(255,255,255,.16); border-radius: 10px;
+  padding: 11px 14px; box-shadow: 0 8px 24px rgba(0,0,0,.5); min-width: 188px; }
+#help.hidden { display: none; }
+.help-title { font-weight: 700; margin-bottom: 8px; opacity: .9; }
+.help-row { display: flex; justify-content: space-between; align-items: center; gap: 16px; opacity: .82; padding: 3px 0; }
+kbd { background: rgba(255,255,255,.16); border-radius: 4px; padding: 1px 6px; font-family: inherit; font-size: 11px; }
+#fps { position: fixed; top: 70px; left: 16px; color: #8f9; font-size: 11px; text-shadow: 0 1px 2px #000; pointer-events: none; opacity: .55; display: none; }

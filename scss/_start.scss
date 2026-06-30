@@ -1,0 +1,27 @@
+/* ---------- Start screen (map picker) ---------- */
+#start { position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column; background: #20242e; }
+#map { flex: 1; }
+#panel {
+  padding: 12px 16px; background: #20242e; color: #fff; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+  box-shadow: 0 -2px 12px rgba(0,0,0,.4); z-index: 60;
+}
+#panel h1 { font-size: 17px; margin-right: 6px; }
+#panel .sub { font-size: 12px; opacity: .6; width: 100%; margin-bottom: 2px; }
+#search { flex: 1; min-width: 200px; padding: 9px 12px; border-radius: 8px; border: 1px solid #3a414f;
+  background: #2b303b; color: #fff; font-size: 14px; }
+#search::placeholder { color: #8a93a3; }
+.rad-group { display: flex; gap: 4px; }
+.rad { padding: 8px 11px; border-radius: 7px; border: 1px solid #3a414f; background: #2b303b; color: #cfd6e2;
+  cursor: pointer; font-size: 13px; }
+.rad.sel { background: #ffd54a; color: #20242e; border-color: #ffd54a; font-weight: 600; }
+#go { padding: 10px 20px; border-radius: 8px; border: none; background: #4a90d0; color: #fff; font-size: 14px;
+  font-weight: 600; cursor: pointer; }
+#go:hover { background: #5aa0e0; }
+#geoBtn { padding: 9px 14px; border-radius: 8px; border: 1px solid #3a414f; background: #2b303b; color: #cfd6e2;
+  font-size: 13px; cursor: pointer; white-space: nowrap; }
+#geoBtn:hover { background: #353b47; }
+.crosshair { position: absolute; top: 50%; left: 50%; width: 24px; height: 24px; margin: -12px 0 0 -12px;
+  pointer-events: none; z-index: 1000; }
+.crosshair::before, .crosshair::after { content:""; position:absolute; background:#e0454a; box-shadow:0 0 0 1px rgba(255,255,255,.6); }
+.crosshair::before { left:11px; top:0; width:2px; height:24px; }
+.crosshair::after { top:11px; left:0; height:2px; width:24px; }

@@ -1,0 +1,10 @@
+node_modules/
+.DS_Store
+*.log
+css/*.map
+
+# local dev-only files (not part of the app)
+__archive/
+.claude/
+HANDOFF.md
+RESUME.md
