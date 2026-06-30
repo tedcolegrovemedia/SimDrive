@@ -53,13 +53,6 @@ function updatePlayer(dt) {
   const fric = braking ? 0.9 : 0.99;
   player.speed *= Math.pow(fric, dt);
   player.speed = Math.max(-car.top*0.4, Math.min(car.top, player.speed));
-  // Off the pavement: heavy drag + a low speed cap, so the car is held to the road
-  // (you can still crawl across a verge or corner, but not blast off into the grass).
-  if (worldReady && !onRoad(player.x, player.z)) {
-    player.speed *= Math.pow(0.86, dt);
-    const OFFCAP = 7;
-    player.speed = Math.max(-OFFCAP, Math.min(OFFCAP, player.speed));
-  }
   if (Math.abs(player.speed) < 0.03) player.speed = 0;
 
   const steerRate = 0.035 * (player.speed >= 0 ? 1 : -1);
