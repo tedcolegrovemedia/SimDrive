@@ -21,6 +21,16 @@ function clearWorld() {
   worldGroup = new THREE.Group(); scene.add(worldGroup);
   for (const n of NPCS) {} // meshes were in worldGroup, already removed
   NPCS = [];
+  waterTexes.length = 0;   // old water-texture clones die with the world; stop animating them
+}
+
+// Clone a base canvas texture with a world-space repeat (metres per tile). ShapeGeometry
+// UVs are in metres, so repeat = 1/m tiles the texture every m metres.
+function tiledTex(base, m, worldMeters) {
+  const t = base.clone(); t.needsUpdate = true;
+  const r = worldMeters ? worldMeters / m : 1 / m;   // PlaneGeometry UVs span 0..1 -> scale by world size
+  t.repeat.set(r, r);
+  return t;
 }
 
 function buildWorld(data, lat0, lon0, radiusMi, heightAt, overture, playMi) {
@@ -39,7 +49,8 @@ function buildWorld(data, lat0, lon0, radiusMi, heightAt, overture, playMi) {
 
   // ---- ground (subdivided + displaced by the terrain heightfield) ----
   const gsz = half * 2 + 200;
-  const groundMat = new THREE.MeshLambertMaterial({ color: 0x6f9b4a }); // grass green base; OSM parks draw a brighter green on top
+  // grass green base tints the near-white grass texture; OSM parks draw a brighter green on top
+  const groundMat = new THREE.MeshLambertMaterial({ color: 0x7cab54, map: tiledTex(grassTex, 9, gsz) });
   const segs = Math.min(256, Math.max(80, Math.round(gsz / 9)));
   groundSize = gsz; groundSeg = segs;            // so surfaceHeight() matches this mesh exactly
   const gGeo = new THREE.PlaneGeometry(gsz, gsz, segs, segs);
@@ -177,7 +188,7 @@ function buildWorld(data, lat0, lon0, radiusMi, heightAt, overture, playMi) {
   };
 
   // ---- green areas & water (filled shapes). flat=true keeps water level. ----
-  function fillShapes(polys, color, yoff, flat) {
+  function fillShapes(polys, color, yoff, flat, tex, texM) {
     const geos = [];
     for (const pts of polys) {
       if (pts.length < 3) continue;
@@ -197,17 +208,26 @@ function buildWorld(data, lat0, lon0, radiusMi, heightAt, overture, playMi) {
     }
     if (!geos.length) return;
     const merged = mergeGeometries(geos, false);
-    const mesh = new THREE.Mesh(merged, new THREE.MeshLambertMaterial({ color, side: THREE.DoubleSide }));
+    // ShapeGeometry UVs equal the shape's metre coordinates, so a 1/texM repeat tiles every texM metres
+    const map = tex ? tiledTex(tex, texM) : null;
+    const mesh = new THREE.Mesh(merged, new THREE.MeshLambertMaterial({ color, side: THREE.DoubleSide, map }));
     mesh.receiveShadow = true; worldGroup.add(mesh);
+    return mesh;
   }
-  fillShapes(greenPolys, 0x6fa942, 0.06, false);    // brighter SimCity green grass/parks/woods
-  fillShapes(parkingPolys, 0x55585f, 0.13, false);  // parking lots: flat asphalt, a touch lighter than the streets
-  fillShapes(waterPolys, 0x2f7fc0, 0.1, true);      // lakes/rivers: flat, bright, sits in the basin
+  fillShapes(greenPolys, 0x7cb84f, 0.06, false, grassTex, 9);     // brighter SimCity green grass/parks/woods
+  fillShapes(parkingPolys, 0x5d6168, 0.13, false, asphaltTex, 7); // parking lots: flat asphalt, a touch lighter than the streets
+  const waterMesh = fillShapes(waterPolys, 0x3589cf, 0.1, true, waterTex, 16); // lakes/rivers: flat, bright, sits in the basin
+  if (waterMesh) waterTexes.push(waterMesh.material.map);         // render loop scrolls it — water drifts
 
   // rivers/streams mapped as lines -> draped blue ribbons (VISIBLE water, follows the channel)
   const waterLinePos = [];
   for (const wl of waterLines) ribbon(wl.pts, wl.w / 2, waterLinePos, (x, z) => surfaceHeight(x, z) - 0.02);
-  if (waterLinePos.length) worldGroup.add(flatMesh(waterLinePos, 0x2f7fc0, false));
+  if (waterLinePos.length) {
+    const t = waterTex.clone(); t.needsUpdate = true;   // own instance so offset animates independently
+    const m = texMesh(waterLinePos, t, 1/16, 0x3589cf, false);  // texMesh UVs already scale to metres/16
+    waterTexes.push(t);
+    worldGroup.add(m);
+  }
 
   // ---- sidewalks + roads + lane markings + bridges ----
   // Round sharp bends in every road so turns are smooth curves (no jagged miter spikes),
@@ -396,7 +416,7 @@ function buildWorld(data, lat0, lon0, radiusMi, heightAt, overture, playMi) {
     }
   }
   buildSidewalks(roadPolys, gsz, waterYAt); // ONE unified band offset from the whole road network
-  if (roadPos.length) worldGroup.add(flatMesh(roadPos, 0x40434b, false));
+  if (roadPos.length) worldGroup.add(texMesh(roadPos, asphaltTex, 1/7, 0x484c55, false)); // speckled asphalt, planar UVs
   if (dashPos.length) { const m = flatMesh(dashPos, 0xd9c25a, false); m.material.emissive = new THREE.Color(0x3a3318); worldGroup.add(m); }
   if (bridgePos.length) { const m = flatMesh(bridgePos, 0x8a8f98, true); m.material.side = THREE.DoubleSide; m.castShadow = true; worldGroup.add(m); }
   buildGraph(roadLines);

@@ -187,6 +187,55 @@ const concreteTex = canvasTex(128, g => {
   for(let i=0;i<700;i++){ const v=130+(Math.random()*44|0); g.fillStyle=`rgba(${v},${v-2},${v-8},0.18)`; g.fillRect(Math.random()*128|0, Math.random()*128|0, 2, 2); }
   g.fillStyle='#8f8c82'; g.fillRect(0,0,3,128);   // single cross-joint groove (spans the walk); tiles once per panel along the walk
 });
+// Grass: soft tone-on-tone patches + blade speckle, drawn in light neutrals so the
+// material colour tints it (same trick as the facades) — ground and parks share it.
+const grassTex = canvasTex(128, g => {
+  g.fillStyle = '#d9d9d0'; g.fillRect(0, 0, 128, 128);
+  for (let i = 0; i < 26; i++) {                               // mottled patches
+    g.fillStyle = Math.random() < 0.5 ? 'rgba(90,105,60,0.07)' : 'rgba(242,246,228,0.08)';
+    g.beginPath();
+    g.ellipse(Math.random()*128, Math.random()*128, 10 + Math.random()*22, 8 + Math.random()*16, Math.random()*3, 0, 7);
+    g.fill();
+  }
+  for (let i = 0; i < 1400; i++) {                             // blade speckle
+    const v = 190 + (Math.random()*55|0);
+    g.fillStyle = `rgba(${v-8},${v},${v-30},0.5)`;
+    g.fillRect(Math.random()*128|0, Math.random()*128|0, 1, 2);
+  }
+});
+// Asphalt: aggregate speckle, darker repair patches, a few hairline cracks.
+const asphaltTex = canvasTex(128, g => {
+  g.fillStyle = '#d4d4d6'; g.fillRect(0, 0, 128, 128);
+  for (let i = 0; i < 1600; i++) { const v = 175 + (Math.random()*70|0);
+    g.fillStyle = `rgba(${v},${v},${v+4},0.35)`; g.fillRect(Math.random()*128|0, Math.random()*128|0, 1, 1); }
+  for (let i = 0; i < 5; i++) {
+    g.fillStyle = `rgba(30,32,38,${0.05 + Math.random()*0.05})`;
+    g.fillRect(Math.random()*128|0, Math.random()*128|0, 20 + Math.random()*40, 14 + Math.random()*30);
+  }
+  g.strokeStyle = 'rgba(40,42,48,0.25)'; g.lineWidth = 1;
+  for (let i = 0; i < 3; i++) { g.beginPath();
+    let x = Math.random()*128, y = Math.random()*128; g.moveTo(x, y);
+    for (let s = 0; s < 5; s++) { x += Math.random()*22 - 11; y += Math.random()*22 - 11; g.lineTo(x, y); }
+    g.stroke(); }
+});
+// Water: faint ripple bands. Every texture instance used on water registers in
+// waterTexes; the render loop scrolls their offsets so rivers/lakes visibly drift.
+const waterTexes = [];
+const waterTex = canvasTex(128, g => {
+  g.fillStyle = '#dfe3e6'; g.fillRect(0, 0, 128, 128);
+  for (let i = 0; i < 22; i++) {                               // light ripple crests
+    g.strokeStyle = `rgba(255,255,255,${0.10 + Math.random()*0.15})`; g.lineWidth = 1 + Math.random()*1.5;
+    const y = Math.random()*128, ph = Math.random()*6; g.beginPath();
+    for (let x = 0; x <= 128; x += 8) g.lineTo(x, y + Math.sin(x/17 + ph)*2.5);
+    g.stroke();
+  }
+  for (let i = 0; i < 12; i++) {                               // darker troughs
+    g.strokeStyle = 'rgba(60,85,110,0.10)'; g.lineWidth = 1 + Math.random()*2;
+    const y = Math.random()*128, ph = Math.random()*6; g.beginPath();
+    for (let x = 0; x <= 128; x += 8) g.lineTo(x, y + Math.sin(x/14 + ph)*3);
+    g.stroke();
+  }
+});
 // Like flatMesh but textured. UVs are either supplied (uvArr) or planar-projected from world XZ.
 function texMesh(posArr, tex, uvScale, color, cast, uvArr) {
   const g = new THREE.BufferGeometry();

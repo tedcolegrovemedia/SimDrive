@@ -150,6 +150,8 @@ function loop(now) {
   if (worldReady) {
     updateSignals(dt); updatePlayer(dt); updateNPCs(dt); updateCamera(); updateGear();
     skyDome.position.copy(camera.position);   // sky stays centred on the camera
+    const wt = now * 0.001;                    // drift the water ripple texture — cheap "alive" motion
+    for (const t of waterTexes) t.offset.set((wt * 0.014) % 1, (wt * 0.008) % 1);
     renderer.render(scene, camera);
     const mph = Math.round(Math.abs(player.speed) * 2.237);
     drawSpeedGauge(mph, '#' + CARS[player.type].body.toString(16).padStart(6, '0')); // 2D speedometer
