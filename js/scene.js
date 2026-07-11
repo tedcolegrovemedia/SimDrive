@@ -161,7 +161,36 @@ function surfaceHeight(x, z) {
   return Math.max(dMain, dAnti);
 }
 
-// Foliage: mapped trees + trees scattered through wooded areas, drawn as two
-// InstancedMeshes (trunk + leaf cone) so thousands cost only two draw calls.
+// Foliage: mapped trees + trees scattered through wooded areas, drawn as a handful of
+// InstancedMeshes (one trunk mesh + one canopy mesh per species) so thousands of trees
+// cost only a few draw calls. Canopies get baked vertex colours (darker toward the
+// base) that MULTIPLY with the per-instance green — depth without any lighting cost.
 const _treeTrunkGeo = new THREE.CylinderGeometry(0.22, 0.32, 2.4, 5);
-const _treeLeafGeo = new THREE.ConeGeometry(2.0, 4.6, 6);
+function _shadeCanopy(geo, yMin, yMax) {
+  const pos = geo.getAttribute('position'), col = new Float32Array(pos.count * 3);
+  for (let i = 0; i < pos.count; i++) {
+    const t = Math.max(0, Math.min(1, (pos.getY(i) - yMin) / (yMax - yMin)));
+    col[i*3] = col[i*3+1] = col[i*3+2] = 0.7 + 0.3 * t;
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return geo;
+}
+// conifer: two stacked cones; spans y -1.7..3.2
+const _coniferGeo = _shadeCanopy(mergeGeometries([
+  new THREE.ConeGeometry(2.0, 3.4, 6),
+  new THREE.ConeGeometry(1.45, 2.6, 6).translate(0, 1.9, 0),
+], false), -1.7, 3.2);
+// deciduous: lumpy canopy from overlapping icosahedron blobs; spans y -1.9..2.9
+const _deciduousGeo = _shadeCanopy(mergeGeometries([
+  new THREE.IcosahedronGeometry(1.9, 0),
+  new THREE.IcosahedronGeometry(1.35, 0).translate(1.1, 0.9, 0.2),
+  new THREE.IcosahedronGeometry(1.25, 0).translate(-1.0, 1.0, -0.4),
+  new THREE.IcosahedronGeometry(1.1, 0).translate(0.1, 1.7, 0.9),
+], false), -1.9, 2.9);
+// columnar (poplar/juniper): one stretched blob, used sparingly; spans y -2.6..2.6
+const _columnarGeo = _shadeCanopy(new THREE.IcosahedronGeometry(1.0, 0).scale(1.05, 2.6, 1.05), -2.6, 2.6);
+// bush: squashed blob for scrub, hedges-to-be and front yards
+const _bushGeo = _shadeCanopy(new THREE.IcosahedronGeometry(1.0, 0).scale(1.3, 0.75, 1.3), -0.75, 0.75);
+// fake blob shadow: real shadows are off for foliage (too many casters), so a flat dark
+// disc under each tree grounds it instead of letting it float
+const _blobShadowGeo = new THREE.CircleGeometry(1, 10).rotateX(-Math.PI/2);

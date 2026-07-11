@@ -3,46 +3,124 @@
 // Loaded as a classic script by js/bootstrap.js; all app files share one global
 // scope (the original single-file behaviour), with THREE/addons exposed as globals.
 
-const LEAF_COLS = [0x3f8a3c, 0x4f9a45, 0x357f37, 0x5aa14e, 0x6b8f3a];
-function buildTrees(treePoints, treedPolys) {
-  const pts = treePoints.slice();
-  // scatter through wooded polygons on a jittered grid
+// Three species, each its own InstancedMesh + palette so woods read as mixed stands
+// instead of a field of identical cones. Canopy geometry lives in scene.js.
+const LEAF_COLS = [0x3f8a3c, 0x4f9a45, 0x357f37, 0x5aa14e, 0x6b8f3a];       // deciduous
+const CONIFER_COLS = [0x2e6b34, 0x2a5e3a, 0x39743a, 0x24552e, 0x33703f];
+const COLUMNAR_COLS = [0x3a7a38, 0x2f6d3c, 0x487f3a];
+const BUSH_COLS = [0x4a8a3f, 0x568f46, 0x3d7c39, 0x6a9a4a, 0x50894a];
+// species: geometry, canopy-centre height above ground (× height scale), blob-shadow radius
+const TREE_SPECIES = [
+  { geo: () => _deciduousGeo, cols: LEAF_COLS,     offY: 3.9, shadowR: 2.7 },
+  { geo: () => _coniferGeo,   cols: CONIFER_COLS,  offY: 4.1, shadowR: 2.1 },
+  { geo: () => _columnarGeo,  cols: COLUMNAR_COLS, offY: 4.5, shadowR: 1.3 },
+];
+function buildTrees(treePoints, treedPolys, scrubPolys, yardBushPts) {
+  // mapped trees are mostly street/yard trees -> lean deciduous
+  const pts = treePoints.map(p => ({ x: p.x, z: p.z, sp: Math.random() < 0.65 ? 0 : (Math.random() < 0.75 ? 1 : 2) }));
+  // scatter through wooded polygons on a jittered grid; each wood gets its own
+  // conifer/deciduous mix so separate stands look different from each other
   outer:
   for (const poly of treedPolys) {
     let minX = 1e9, maxX = -1e9, minZ = 1e9, maxZ = -1e9;
     for (const p of poly) { if (p.x<minX)minX=p.x; if (p.x>maxX)maxX=p.x; if (p.z<minZ)minZ=p.z; if (p.z>maxZ)maxZ=p.z; }
-    const step = 11;
+    const step = 11, coniferBias = 0.2 + Math.random() * 0.6;
     for (let x = minX; x < maxX; x += step) {
       for (let z = minZ; z < maxZ; z += step) {
         const jx = x + (Math.random()-0.5)*step, jz = z + (Math.random()-0.5)*step;
-        if (pointInPoly(jx, jz, poly)) pts.push({ x: jx, z: jz });
+        if (pointInPoly(jx, jz, poly))
+          pts.push({ x: jx, z: jz, sp: Math.random() < coniferBias ? 1 : (Math.random() < 0.06 ? 2 : 0) });
         if (pts.length >= 3500) break outer;
       }
     }
   }
-  if (!pts.length) return;
-  const n = pts.length;
-  const trunks = new THREE.InstancedMesh(_treeTrunkGeo, new THREE.MeshLambertMaterial({ color: 0x6b4a2b }), n);
-  // plain material — per-instance colour comes from setColorAt (instanceColor), NOT vertexColors
-  const leaves = new THREE.InstancedMesh(_treeLeafGeo, new THREE.MeshLambertMaterial(), n);
-  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), col = new THREE.Color();
-  const up = new THREE.Vector3(0, 1, 0), s = new THREE.Vector3();
-  for (let i = 0; i < n; i++) {
-    const p = pts[i], gy = terrain(p.x, p.z);
-    const sc = 0.7 + Math.random() * 0.9;
-    q.setFromAxisAngle(up, Math.random() * Math.PI * 2);
-    s.set(sc, sc, sc);
-    m.compose(new THREE.Vector3(p.x, gy + 1.2*sc, p.z), q, s); trunks.setMatrixAt(i, m);
-    m.compose(new THREE.Vector3(p.x, gy + (2.4 + 2.0)*sc, p.z), q, s); leaves.setMatrixAt(i, m);
-    leaves.setColorAt(i, col.set(LEAF_COLS[(Math.random()*LEAF_COLS.length)|0]));
+  const shadows = [];   // {x, z, r} collected for trees AND bushes, one mesh at the end
+  if (pts.length) {
+    const n = pts.length;
+    const trunks = new THREE.InstancedMesh(_treeTrunkGeo, new THREE.MeshLambertMaterial({ color: 0x6b4a2b }), n);
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), col = new THREE.Color();
+    const e = new THREE.Euler(), s = new THREE.Vector3();
+    const bySpecies = [[], [], []];
+    for (const p of pts) bySpecies[p.sp].push(p);
+    let ti = 0;
+    bySpecies.forEach((list, si) => {
+      if (!list.length) return;
+      const spec = TREE_SPECIES[si];
+      // vertexColors (baked canopy shading) MULTIPLIES with per-instance setColorAt greens
+      const leaves = new THREE.InstancedMesh(spec.geo(), new THREE.MeshLambertMaterial({ vertexColors: true }), list.length);
+      for (let i = 0; i < list.length; i++) {
+        const p = list[i], gy = terrain(p.x, p.z);
+        // independent height/width scale + a slight lean — breaks the cloned look
+        const hsc = 0.7 + Math.random() * 0.9, wsc = hsc * (0.78 + Math.random() * 0.5);
+        e.set((Math.random()-0.5)*0.1, Math.random()*Math.PI*2, (Math.random()-0.5)*0.1);
+        q.setFromEuler(e);
+        s.set(wsc, hsc, wsc);
+        m.compose(new THREE.Vector3(p.x, gy + 1.2*hsc, p.z), q, s); trunks.setMatrixAt(ti++, m);
+        m.compose(new THREE.Vector3(p.x, gy + spec.offY*hsc, p.z), q, s); leaves.setMatrixAt(i, m);
+        leaves.setColorAt(i, col.set(spec.cols[(Math.random()*spec.cols.length)|0]));
+        shadows.push({ x: p.x, z: p.z, r: spec.shadowR * wsc });
+      }
+      leaves.instanceMatrix.needsUpdate = true;
+      if (leaves.instanceColor) leaves.instanceColor.needsUpdate = true;
+      // never frustum-cull: an InstancedMesh culls against its origin, which would make
+      // all the trees vanish whenever the map origin is off-screen.
+      leaves.frustumCulled = false;
+      // foliage doesn't cast shadows — keeps the shadow pass cheap on old GPUs with thousands of trees
+      worldGroup.add(leaves);
+    });
+    trunks.instanceMatrix.needsUpdate = true; trunks.frustumCulled = false;
+    worldGroup.add(trunks);
   }
-  trunks.instanceMatrix.needsUpdate = true; leaves.instanceMatrix.needsUpdate = true;
-  if (leaves.instanceColor) leaves.instanceColor.needsUpdate = true;
-  // never frustum-cull: an InstancedMesh culls against its origin, which would make
-  // all the trees vanish whenever the map origin is off-screen.
-  trunks.frustumCulled = false; leaves.frustumCulled = false;
-  // foliage doesn't cast shadows — keeps the shadow pass cheap on old GPUs with thousands of trees
-  worldGroup.add(trunks); worldGroup.add(leaves);
+
+  // bushes: OSM scrub polygons (denser, smaller scatter than woods) + house front yards
+  const bushPts = (yardBushPts || []).slice();
+  outerB:
+  for (const poly of (scrubPolys || [])) {
+    let minX = 1e9, maxX = -1e9, minZ = 1e9, maxZ = -1e9;
+    for (const p of poly) { if (p.x<minX)minX=p.x; if (p.x>maxX)maxX=p.x; if (p.z<minZ)minZ=p.z; if (p.z>maxZ)maxZ=p.z; }
+    const step = 6.5;
+    for (let x = minX; x < maxX; x += step) {
+      for (let z = minZ; z < maxZ; z += step) {
+        const jx = x + (Math.random()-0.5)*step, jz = z + (Math.random()-0.5)*step;
+        if (pointInPoly(jx, jz, poly)) bushPts.push({ x: jx, z: jz });
+        if (bushPts.length >= 3000) break outerB;
+      }
+    }
+  }
+  if (bushPts.length) {
+    const bushes = new THREE.InstancedMesh(_bushGeo, new THREE.MeshLambertMaterial({ vertexColors: true }), bushPts.length);
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), col = new THREE.Color();
+    const up = new THREE.Vector3(0, 1, 0), s = new THREE.Vector3();
+    for (let i = 0; i < bushPts.length; i++) {
+      const p = bushPts[i], gy = surfaceHeight(p.x, p.z);   // bushes are low — ride the MESH so they can't sink
+      const sc = 0.55 + Math.random() * 0.65;
+      q.setFromAxisAngle(up, Math.random() * Math.PI * 2);
+      s.set(sc * (0.85 + Math.random()*0.4), sc, sc * (0.85 + Math.random()*0.4));
+      m.compose(new THREE.Vector3(p.x, gy + 0.45*sc, p.z), q, s);
+      bushes.setMatrixAt(i, m);
+      bushes.setColorAt(i, col.set(BUSH_COLS[(Math.random()*BUSH_COLS.length)|0]));
+    }
+    bushes.instanceMatrix.needsUpdate = true;
+    if (bushes.instanceColor) bushes.instanceColor.needsUpdate = true;
+    bushes.frustumCulled = false;
+    worldGroup.add(bushes);
+  }
+
+  if (shadows.length) {
+    const blobs = new THREE.InstancedMesh(_blobShadowGeo,
+      new THREE.MeshBasicMaterial({ color: 0x102408, transparent: true, opacity: 0.22, depthWrite: false,
+                                    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }), shadows.length);
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3();
+    for (let i = 0; i < shadows.length; i++) {
+      const b = shadows[i];
+      s.set(b.r, 1, b.r);
+      m.compose(new THREE.Vector3(b.x, surfaceHeight(b.x, b.z) + 0.08, b.z), q, s);
+      blobs.setMatrixAt(i, m);
+    }
+    blobs.instanceMatrix.needsUpdate = true;
+    blobs.frustumCulled = false;
+    worldGroup.add(blobs);
+  }
 }
 
 // Procedurally fill OSM "residential" zones with houses lining the streets, where OSM has no
@@ -53,8 +131,9 @@ const _houseBodyGeo = new THREE.BoxGeometry(1, 1, 1);
 const _houseRoofGeo = new THREE.ConeGeometry(0.72, 1, 4);
 const _houseChimGeo = new THREE.BoxGeometry(1, 1, 1);
 const CHIM_PAL = [0x9a5f4a, 0x8d8d90, 0x7d6a5c];   // brick / concrete / stone chimneys
+// Returns front-yard bush points for buildTrees to render (foundation plantings).
 function buildHouses(residentialPolys, buildingPolys, roadLines) {
-  if (!residentialPolys.length || !roadLines.length) return;
+  if (!residentialPolys.length || !roadLines.length) return [];
   const CELL = 13, SET = 9.5, SPACING = 18;
   const occ = new Set(), ckey = (x, z) => Math.round(x/CELL) + '_' + Math.round(z/CELL);
   for (const b of buildingPolys) {                         // don't place over existing buildings
@@ -72,13 +151,13 @@ function buildHouses(residentialPolys, buildingPolys, roadLines) {
         for (const side of [1, -1]) {
           const hx = a.x + ux*d + px*side*SET, hz = a.z + uz*d + pz*side*SET, k = ckey(hx, hz);
           if (occ.has(k) || !inRes(hx, hz)) continue;
-          occ.add(k); houses.push({ x: hx, z: hz, ang });
+          occ.add(k); houses.push({ x: hx, z: hz, ang, fx: -px*side, fz: -pz*side }); // f = toward the road (front yard)
         }
       }
     }
   }
-  if (!houses.length) return;
-  const n = houses.length;
+  if (!houses.length) return [];
+  const n = houses.length, yardBushes = [];
   const bodies = new THREE.InstancedMesh(_houseBodyGeo, new THREE.MeshLambertMaterial(), n);
   const roofs = new THREE.InstancedMesh(_houseRoofGeo, new THREE.MeshLambertMaterial(), n);
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), rq = new THREE.Quaternion();
@@ -102,6 +181,16 @@ function buildHouses(residentialPolys, buildingPolys, roadLines) {
                  new THREE.Vector3(0.55, rh * 1.5, 0.55));
       chims.push({ mat: cm, c: CHIM_PAL[(Math.random()*CHIM_PAL.length)|0] });
     }
+    // foundation plantings: 1-3 bushes along the FRONT wall (toward the road), most houses
+    if (Math.random() < 0.75) {
+      const ux2 = Math.cos(h.ang), uz2 = Math.sin(h.ang);          // along-road (front wall) direction
+      const fd = dp/2 + 1.0 + Math.random()*0.6;                   // just off the front wall
+      const nb = 1 + (Math.random()*3|0);
+      for (let bji = 0; bji < nb; bji++) {
+        const off = (Math.random()-0.5) * w * 0.8;
+        yardBushes.push({ x: h.x + h.fx*fd + ux2*off, z: h.z + h.fz*fd + uz2*off });
+      }
+    }
   }
   bodies.instanceMatrix.needsUpdate = roofs.instanceMatrix.needsUpdate = true;
   if (bodies.instanceColor) bodies.instanceColor.needsUpdate = true;
@@ -117,6 +206,7 @@ function buildHouses(residentialPolys, buildingPolys, roadLines) {
     chim.castShadow = true; chim.frustumCulled = false;
     worldGroup.add(chim);
   }
+  return yardBushes;
 }
 
 // ONE unified sidewalk for the whole road network, built from a signed distance field.

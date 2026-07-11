@@ -52,7 +52,7 @@ function buildWorld(data, lat0, lon0, radiusMi, heightAt, overture, playMi) {
 
   // ---- sort elements ----
   const roadPolys = [], buildingPolys = [], partPolys = [], waterPolys = [], waterLines = [], greenPolys = [], residentialPolys = [], parkingPolys = [];
-  const treePoints = [], treedPolys = []; // mapped trees + wooded areas to scatter foliage in
+  const treePoints = [], treedPolys = [], scrubPolys = []; // mapped trees + wooded areas (trees) + scrub (bushes)
   const signalNodes = [], stopNodes = [];  // traffic lights & stop signs
   const GREEN_LEISURE = /park|garden|pitch|golf_course|playground|recreation_ground/;
   const GREEN_LANDUSE = /grass|forest|meadow|recreation_ground|village_green|cemetery|farmland|orchard|allotments/;
@@ -127,7 +127,8 @@ function buildWorld(data, lat0, lon0, radiusMi, heightAt, overture, playMi) {
     else if (t.landuse === 'residential') residentialPolys.push(pts);
     else if (GREEN_LEISURE.test(t.leisure || '') || GREEN_LANDUSE.test(t.landuse || '') || GREEN_NATURAL.test(t.natural || '')) {
       greenPolys.push(pts);
-      if (t.natural === 'wood' || t.natural === 'scrub' || t.landuse === 'forest') treedPolys.push(pts);
+      if (t.natural === 'wood' || t.landuse === 'forest') treedPolys.push(pts);
+      else if (t.natural === 'scrub') scrubPolys.push(pts);   // scrub = bushes, not full trees
     }
   }
 
@@ -722,8 +723,8 @@ function buildWorld(data, lat0, lon0, radiusMi, heightAt, overture, playMi) {
     mesh.castShadow = true; mesh.receiveShadow = true; worldGroup.add(mesh);
   }
 
-  buildHouses(residentialPolys, renderB, roadLines);
-  buildTrees(treePoints, treedPolys);
+  const yardBushPts = buildHouses(residentialPolys, renderB, roadLines) || [];
+  buildTrees(treePoints, treedPolys, scrubPolys, yardBushPts);
   signPosts = [];                       // reset the shared sign-pole footprint registry
   buildTrafficLights(signalNodes, roadPolys);
   buildStopSigns(stopNodes, roadPolys);
