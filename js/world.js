@@ -51,6 +51,8 @@ const HOUSE_PAL = [0xcdbb9a, 0xc9a98f, 0xb7c0a8, 0xd2c4a0, 0xb09a86, 0xc2b59a, 0
 const ROOF_PAL = [0x5e5044, 0x73463c, 0x4f5a68, 0x554b42, 0x44524a, 0x6a5240];
 const _houseBodyGeo = new THREE.BoxGeometry(1, 1, 1);
 const _houseRoofGeo = new THREE.ConeGeometry(0.72, 1, 4);
+const _houseChimGeo = new THREE.BoxGeometry(1, 1, 1);
+const CHIM_PAL = [0x9a5f4a, 0x8d8d90, 0x7d6a5c];   // brick / concrete / stone chimneys
 function buildHouses(residentialPolys, buildingPolys, roadLines) {
   if (!residentialPolys.length || !roadLines.length) return;
   const CELL = 13, SET = 9.5, SPACING = 18;
@@ -81,6 +83,7 @@ function buildHouses(residentialPolys, buildingPolys, roadLines) {
   const roofs = new THREE.InstancedMesh(_houseRoofGeo, new THREE.MeshLambertMaterial(), n);
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), rq = new THREE.Quaternion();
   const pos = new THREE.Vector3(), scl = new THREE.Vector3(), UP = new THREE.Vector3(0, 1, 0), col = new THREE.Color();
+  const chims = [];                                       // ~60% of houses get a brick chimney
   for (let i = 0; i < n; i++) {
     const h = houses[i], gy = surfaceHeight(h.x, h.z);
     const w = 5.5 + Math.random()*2.5, dp = 5 + Math.random()*2.5, bh = 3.6 + Math.random()*2.4, rh = 1.9 + Math.random()*1.1;
@@ -92,6 +95,13 @@ function buildHouses(residentialPolys, buildingPolys, roadLines) {
     pos.set(h.x, gy + bh + rh/2, h.z); scl.set(w, rh, dp);
     m.compose(pos, rq, scl); roofs.setMatrixAt(i, m);
     roofs.setColorAt(i, col.set(ROOF_PAL[(Math.random()*ROOF_PAL.length)|0]));
+    if (Math.random() < 0.6) {
+      pos.set(w * 0.28, 0, dp * 0.12).applyQuaternion(q); // local roof-side offset -> world
+      const cm = new THREE.Matrix4();
+      cm.compose(new THREE.Vector3(h.x + pos.x, gy + bh + rh*0.55, h.z + pos.z), q,
+                 new THREE.Vector3(0.55, rh * 1.5, 0.55));
+      chims.push({ mat: cm, c: CHIM_PAL[(Math.random()*CHIM_PAL.length)|0] });
+    }
   }
   bodies.instanceMatrix.needsUpdate = roofs.instanceMatrix.needsUpdate = true;
   if (bodies.instanceColor) bodies.instanceColor.needsUpdate = true;
@@ -99,6 +109,14 @@ function buildHouses(residentialPolys, buildingPolys, roadLines) {
   bodies.castShadow = roofs.castShadow = true;
   bodies.frustumCulled = roofs.frustumCulled = false;
   worldGroup.add(bodies, roofs);
+  if (chims.length) {
+    const chim = new THREE.InstancedMesh(_houseChimGeo, new THREE.MeshLambertMaterial(), chims.length);
+    chims.forEach((cc, j) => { chim.setMatrixAt(j, cc.mat); chim.setColorAt(j, col.set(cc.c)); });
+    chim.instanceMatrix.needsUpdate = true;
+    if (chim.instanceColor) chim.instanceColor.needsUpdate = true;
+    chim.castShadow = true; chim.frustumCulled = false;
+    worldGroup.add(chim);
+  }
 }
 
 // ONE unified sidewalk for the whole road network, built from a signed distance field.

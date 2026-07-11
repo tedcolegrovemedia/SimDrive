@@ -91,6 +91,18 @@ const FACADES = [
       g.fillStyle='#3c4652'; g.fillRect(12,14,16,24); g.fillRect(38,14,16,24);
       g.fillStyle='#d6d1c7'; g.fillRect(12,14,16,3); g.fillRect(38,14,16,3); }) },
 ];
+// Ground-floor storefront band (tiles horizontally only): big glass, a doorway, and a
+// sign/awning strip on top. Near-white surround so the building's palette colour tints it.
+const STOREFRONT = { cw: 3.8, tex: canvasTex(64, g => {
+  g.fillStyle='#ded9cf'; g.fillRect(0,0,64,64);                    // masonry surround
+  g.fillStyle='#8b5a43'; g.fillRect(0,4,64,11);                    // awning / sign band
+  g.fillStyle='#f0ece4'; g.fillRect(0,15,64,2);
+  g.fillStyle='#232a33'; g.fillRect(5,20,34,44);                   // display glass (to the ground)
+  g.fillStyle='#aab4bd'; g.fillRect(5,20,34,2);                    // glass top reflection
+  g.fillStyle='#5b636e'; g.fillRect(21,20,2,44);                   // mullion
+  g.fillStyle='#463229'; g.fillRect(45,24,14,40);                  // recessed door
+  g.fillStyle='#2c333c'; g.fillRect(48,30,8,26);                   // door glass
+}) };
 // Concrete sidewalk: light slab tone with panel-joint grooves. UVs run u=along-walk, v=across-walk,
 // so a groove drawn along the texture's V axis (constant U) becomes a CROSS joint across the walk.
 // We draw ONLY that (no U-axis line) → cross joints every panel, with NO continuous lengthwise line.

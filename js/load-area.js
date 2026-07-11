@@ -123,6 +123,7 @@ async function loadArea(lat, lon, rMi) {
   const q = `[out:json][timeout:90];(` +
     `way["highway"](${bbox});` +
     `way["building"](${bbox});` +
+    `way["building:part"](${bbox});` + // Simple-3D-Buildings parts: towers/steeples/wings with own heights+roofs
     `way["natural"~"water|wood|grassland|scrub"](${bbox});` +
     `way["water"](${bbox});` +
     `way["waterway"](${bbox});` +
@@ -144,7 +145,8 @@ async function loadArea(lat, lon, rMi) {
   try {
     const elevPromise = fetchElevation(lat, lon, half); // runs alongside Overpass
     // Overpass result is cached per-area so revisiting an area never re-downloads it.
-    const osmKey = `osm|${s.toFixed(4)},${w.toFixed(4)},${nth.toFixed(4)},${e.toFixed(4)}`;
+    // v2: query now also fetches building:part ways (3D roof detail) — old cache entries lack them
+    const osmKey = `osm2|${s.toFixed(4)},${w.toFixed(4)},${nth.toFixed(4)},${e.toFixed(4)}`;
     let data = await cacheGet(osmKey);
     if (!data) { data = await fetchOverpass(q); await cacheSet(osmKey, data); }
     if (!data.elements || !data.elements.length) throw new Error('No map data found here — try a more built-up area.');

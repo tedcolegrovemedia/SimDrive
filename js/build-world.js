@@ -51,7 +51,7 @@ function buildWorld(data, lat0, lon0, radiusMi, heightAt, overture, playMi) {
   groundMesh.receiveShadow = true; worldGroup.add(groundMesh);
 
   // ---- sort elements ----
-  const roadPolys = [], buildingPolys = [], waterPolys = [], waterLines = [], greenPolys = [], residentialPolys = [], parkingPolys = [];
+  const roadPolys = [], buildingPolys = [], partPolys = [], waterPolys = [], waterLines = [], greenPolys = [], residentialPolys = [], parkingPolys = [];
   const treePoints = [], treedPolys = []; // mapped trees + wooded areas to scatter foliage in
   const signalNodes = [], stopNodes = [];  // traffic lights & stop signs
   const GREEN_LEISURE = /park|garden|pitch|golf_course|playground|recreation_ground/;
@@ -117,6 +117,10 @@ function buildWorld(data, lat0, lon0, radiusMi, heightAt, overture, playMi) {
       roadPolys.push({ pts, w: ROAD_WIDTH[t.highway] || 6.5, bridge: !!(t.bridge && t.bridge !== 'no'), name: t.name });
     }
     else if (t.amenity === 'parking') parkingPolys.push(pts);
+    // Simple-3D building parts (checked BEFORE t.building: a part is not its own building):
+    // towers/steeples/wings with their own height + roof shape — these replace the parent
+    // outline so landmark buildings render as multiple masses instead of one box.
+    else if (t['building:part'] && t['building:part'] !== 'no') partPolys.push({ pts, t });
     else if (t.building) buildingPolys.push({ pts, t });
     else if (t.natural === 'water' || t.water || t.waterway === 'riverbank') waterPolys.push(pts);
     else if (t.waterway && WATERWAY_W[t.waterway]) waterLines.push({ pts, w: WATERWAY_W[t.waterway] });
@@ -127,14 +131,7 @@ function buildWorld(data, lat0, lon0, radiusMi, heightAt, overture, playMi) {
     }
   }
 
-  // Overture buildings (richer + real heights) replace the sparse OSM footprints when available.
-  if (overture && overture.length) {
-    buildingPolys.length = 0;
-    for (const b of overture) {
-      const pts = b.ll.map(([lo, la]) => toXZ(la, lo));
-      buildingPolys.push({ pts, t: { height: b.height ? String(b.height) : '' } });
-    }
-  }
+  // (Overture footprints are merged with the OSM tags in the buildings section below.)
 
   // Wide waterways (rivers/canals) are mapped as LINES in OSM and render as broad DRAPED ribbons
   // (visible water following the channel). They are invisible to the polygon clearance system, so
@@ -372,24 +369,146 @@ function buildWorld(data, lat0, lon0, radiusMi, heightAt, overture, playMi) {
   if (bridgePos.length) { const m = flatMesh(bridgePos, 0x8a8f98, true); m.material.side = THREE.DoubleSide; m.castShadow = true; worldGroup.add(m); }
   buildGraph(roadLines);
 
-  // ---- buildings (real footprints -> window-tiled walls + flat roofs) ----
-  const wallBuckets = FACADES.map(() => []); const roofGeos = [], collisionPolys = [];
-  for (const b of buildingPolys) {
+  // ---- buildings (real footprints -> window-tiled walls + SHAPED roofs) ----
+  // Detail pass: OSM roof tags (roof:shape/height/colour), building:colour, Simple-3D
+  // building:parts (church towers, stepped masses), plus procedural storefront ground
+  // floors, parapets and steeples. Overture stays the base footprint/height source when
+  // available; each Overture footprint ADOPTS the tags of the OSM building it sits inside,
+  // so the roof/colour detail survives the footprint swap.
+
+  // Coarse spatial index over OSM building footprints for centroid-containment lookups
+  // (part -> parent assignment, Overture -> OSM tag adoption).
+  const BCELL = 40, bIndex = new Map();
+  const bboxOf = (pp) => { let x0=1e9,x1=-1e9,z0=1e9,z1=-1e9;
+    for (const p of pp) { if(p.x<x0)x0=p.x; if(p.x>x1)x1=p.x; if(p.z<z0)z0=p.z; if(p.z>z1)z1=p.z; }
+    return { x0, x1, z0, z1 }; };
+  buildingPolys.forEach((b) => { const bb = bboxOf(b.pts);
+    for (let gz = Math.floor(bb.z0/BCELL); gz <= Math.floor(bb.z1/BCELL); gz++)
+      for (let gx = Math.floor(bb.x0/BCELL); gx <= Math.floor(bb.x1/BCELL); gx++) {
+        const k = gx+'_'+gz; let a = bIndex.get(k); if (!a) { a = []; bIndex.set(k, a); } a.push(b);
+      } });
+  const centroidOf = (pp) => { let cx=0,cz=0; for (const p of pp){cx+=p.x;cz+=p.z;} return { x:cx/pp.length, z:cz/pp.length }; };
+  const containingBuilding = (x, z) => {
+    const a = bIndex.get(Math.floor(x/BCELL)+'_'+Math.floor(z/BCELL));
+    if (a) for (const b of a) if (pointInPoly(x, z, b.pts)) return b;
+    return null;
+  };
+
+  // Assign each part to its parent outline: the parent stops rendering (its parts ARE the
+  // building, per the Simple-3D scheme) but keeps its footprint for collision; parts share
+  // the parent's ground level so stacked masses line up on a slope.
+  for (const p of partPolys) {
+    const c = centroidOf(p.pts);
+    const parent = containingBuilding(c.x, c.z);
+    if (parent) { parent.hasParts = true; p.parent = parent; }
+  }
+  const partOwners = buildingPolys.filter(b => b.hasParts);
+  const orphanParts = partPolys.filter(p => !p.parent);
+
+  // Final render list. With Overture: Overture mass + adopted OSM tags, EXCEPT where OSM
+  // parts give a better multi-mass model of the same building (drop the Overture blob there).
+  const renderB = [], collisionPolys = [];
+  if (overture && overture.length) {
+    for (const b of overture) {
+      const pts = b.ll.map(([lo, la]) => toXZ(la, lo));
+      if (pts.length < 3) continue;
+      const c = centroidOf(pts);
+      let skip = false;
+      for (const o of partOwners) if (pointInPoly(c.x, c.z, o.pts)) { skip = true; break; }
+      if (!skip) for (const p of orphanParts) if (pointInPoly(c.x, c.z, p.pts)) { skip = true; break; }
+      if (skip) continue;
+      const osm = containingBuilding(c.x, c.z);
+      const t = osm ? { ...osm.t } : {};
+      if (!parseFloat(t.height) && b.height) t.height = String(b.height);
+      renderB.push({ pts, t });
+    }
+  } else {
+    for (const b of buildingPolys) if (!b.hasParts) renderB.push(b);
+  }
+  for (const o of partOwners) collisionPolys.push(o.pts);   // outline blocks driving; parts render
+  for (const p of partPolys) renderB.push({ pts: p.pts, t: p.t, isPart: true, parent: p.parent });
+
+  // --- footprint helpers for shaped roofs ---
+  // Drop near-collinear vertices so a rectangle mapped with extra nodes still reads as a quad.
+  const simplifyCorners = (pp) => {
+    const out = [], n = pp.length;
+    for (let i = 0; i < n; i++) {
+      const p = pp[(i+n-1)%n], c = pp[i], q = pp[(i+1)%n];
+      const ax=c.x-p.x, az=c.z-p.z, bx=q.x-c.x, bz=q.z-c.z;
+      const la=Math.hypot(ax,az)||1e-9, lb=Math.hypot(bx,bz)||1e-9;
+      if (Math.abs(ax*bz - az*bx)/(la*lb) > 0.15) out.push(c);   // keep corners bent > ~9°
+    }
+    return out.length >= 3 ? out : pp;
+  };
+  const isConvexQuad = (q) => {
+    if (q.length !== 4) return false;
+    let sgn = 0;
+    for (let i = 0; i < 4; i++) {
+      const a=q[i], b=q[(i+1)%4], c=q[(i+2)%4];
+      const cr = (b.x-a.x)*(c.z-b.z) - (b.z-a.z)*(c.x-b.x);
+      if (Math.abs(cr) < 1e-6) continue;
+      if (!sgn) sgn = Math.sign(cr); else if (Math.sign(cr) !== sgn) return false;
+    }
+    return true;
+  };
+  const cssColor = (s) => {              // roof:colour / building:colour -> THREE.Color (hex or CSS name)
+    if (!s) return null;
+    s = String(s).trim().toLowerCase();
+    if (/^#([0-9a-f]{3}|[0-9a-f]{6})$/.test(s)) return new THREE.Color(s);
+    if (/^[0-9a-f]{6}$/.test(s)) return new THREE.Color('#' + s);
+    if (THREE.Color.NAMES && THREE.Color.NAMES[s] !== undefined) return new THREE.Color(s);
+    return null;
+  };
+  const RSHAPE = { gabled:'gabled', gambrel:'gabled', round:'gabled', saltbox:'gabled',
+    hipped:'hipped', 'half-hipped':'hipped', mansard:'hipped',
+    pyramidal:'pyramidal', cone:'pyramidal', conical:'pyramidal',
+    spire:'spire', steeple:'spire', dome:'dome', onion:'dome' };
+
+  const wallBuckets = FACADES.map(() => []); const roofGeos = [];
+  const storePos = [], storeUV = [], storeCol = [];
+  const detail = { pos: [], col: [] };   // untextured coloured tris: roofs/gables/parapets/steeples
+  const dTri = (x1,y1,z1, x2,y2,z2, x3,y3,z3, c) => {
+    detail.pos.push(x1,y1,z1, x2,y2,z2, x3,y3,z3);
+    detail.col.push(c.r,c.g,c.b, c.r,c.g,c.b, c.r,c.g,c.b);
+  };
+  const dQuad = (a, ya, b, yb, c, yc, d, yd, cc) => {
+    dTri(a.x,ya,a.z, b.x,yb,b.z, c.x,yc,c.z, cc);
+    dTri(a.x,ya,a.z, c.x,yc,c.z, d.x,yd,d.z, cc);
+  };
+
+  for (const b of renderB) {
     let pts = b.pts;
     if (pts.length > 2 && pts[0].x === pts[pts.length-1].x && pts[0].z === pts[pts.length-1].z) pts = pts.slice(0, -1);
     if (pts.length < 3) continue;
-    let h = parseFloat(b.t.height);
-    if (!h && b.t['building:levels']) h = parseFloat(b.t['building:levels']) * 3.3;
+    const t = b.t || {};
+    let h = parseFloat(t.height);
+    if (!h && t['building:levels']) h = parseFloat(t['building:levels']) * 3.3;
     // Real Overture/OSM heights were rendering ~1/3 of life-size; scale the data-derived
     // heights up so buildings read at their true height (fallback below is already game-tuned).
     if (h && !isNaN(h)) h *= BUILDING_HEIGHT_SCALE;
     if (!h || isNaN(h)) h = 9 + (Math.abs((pts[0].x * 7 + pts[0].z * 13) | 0) % 5) * 3.3;
-    // Some Overture/OSM heights are far too low for the footprint (pancake buildings).
-    // Floor the height by footprint size — a big downtown footprint is never 1 storey.
     let area2 = 0; for (let i = 0, j = pts.length-1; i < pts.length; j = i++) area2 += (pts[j].x + pts[i].x) * (pts[j].z - pts[i].z);
-    const minH = Math.min(15, 5 + Math.sqrt(Math.abs(area2) / 2) * 0.2);
-    h = Math.min(Math.max(h, minH), 600);
-    const col = new THREE.Color(BUILDING_PAL[Math.abs((pts[0].x*3 + pts[0].z*5)|0) % BUILDING_PAL.length]);
+    const areaM2 = Math.abs(area2) / 2;
+    // Some Overture/OSM heights are far too low for the footprint (pancake buildings).
+    // Floor the height by footprint size — but NOT for parts (porches/plinths ARE low).
+    if (!b.isPart) h = Math.max(h, Math.min(15, 5 + Math.sqrt(areaM2) * 0.2));
+    h = Math.min(h, 600);
+    let minH = parseFloat(t.min_height);
+    if (!minH && t['building:min_level']) minH = parseFloat(t['building:min_level']) * 3.3;
+    minH = (minH && !isNaN(minH)) ? minH * BUILDING_HEIGHT_SCALE : 0;
+    if (minH >= h) minH = 0;
+
+    // ground level: lowest terrain corner of the PARENT outline for parts (stacked masses
+    // must share one base). Ground-level walls embed 3 m so slopes don't show gaps;
+    // elevated parts (min_height) start exactly where the mass below them ends.
+    const basePts = (b.isPart && b.parent) ? b.parent.pts : pts;
+    let ground = Infinity;
+    for (const p of basePts) ground = Math.min(ground, terrain(p.x, p.z));
+    const yTop = ground + h;
+    const yBot = minH > 0 ? ground + minH : ground - 3;
+
+    const col = cssColor(t['building:colour']) ||
+      new THREE.Color(BUILDING_PAL[Math.abs((pts[0].x*3 + pts[0].z*5)|0) % BUILDING_PAL.length]);
     // pick a facade style by building size (+ a stable hash) so they're not all skinned alike
     const hash = Math.abs((pts[0].x*13.1 + pts[0].z*7.7) | 0);
     let vi;
@@ -399,24 +518,67 @@ function buildWorld(data, lat0, lon0, radiusMi, heightAt, overture, playMi) {
     else             vi = [1, 1, 5, 3][hash % 4];            // low: residential / brick / industrial
     const CELL_W = FACADES[vi].cw, CELL_H = FACADES[vi].ch;
 
-    // base on the terrain: use the lowest footprint corner, then embed a few metres
-    // so the building doesn't float on the downhill side of a slope.
-    let baseY = Infinity;
-    for (const p of pts) baseY = Math.min(baseY, terrain(p.x, p.z));
-    baseY -= 3;
-    const yBot = baseY, yTop = baseY + h;
+    const worship = t.amenity === 'place_of_worship' ||
+      /^(church|chapel|cathedral|mosque|temple|synagogue|monastery)$/.test(t.building || '');
+
+    // roof shape: tagged, else default small quads to pitched roofs (row houses/shops)
+    const sq = simplifyCorners(pts);
+    const quad = isConvexQuad(sq) ? sq : null;
+    let rs = RSHAPE[(t['roof:shape'] || '').toLowerCase()] || '';
+    if (!rs) {
+      if (b.isPart) rs = 'flat';                             // untagged parts: plain masses
+      else if (worship && quad) rs = 'gabled';
+      else if (quad && areaM2 < 320 && h < 40 && hash % 4) rs = 'gabled';
+      else rs = 'flat';
+    }
+    if ((rs === 'gabled' || rs === 'hipped') && !quad) rs = 'flat';  // a clean ridge needs a clean quad
+
+    // roof height: tagged, else pitch from the short span (~45°); spires run tall
+    let spanS, spanL = 0;
+    if (quad) {
+      const e0 = Math.hypot(quad[1].x-quad[0].x, quad[1].z-quad[0].z);
+      const e1 = Math.hypot(quad[2].x-quad[1].x, quad[2].z-quad[1].z);
+      spanS = Math.min(e0, e1); spanL = Math.max(e0, e1);
+    } else {
+      const bb = bboxOf(pts); spanS = Math.min(bb.x1-bb.x0, bb.z1-bb.z0);
+    }
+    let roofH = parseFloat(t['roof:height']);
+    if (!roofH && t['roof:levels']) roofH = parseFloat(t['roof:levels']) * 3.3;
+    roofH = (roofH && !isNaN(roofH)) ? roofH * BUILDING_HEIGHT_SCALE : 0;
+    if (!roofH) roofH = rs === 'spire' ? Math.min(Math.max(spanS * 1.5, 8), 40)
+              : rs === 'dome' ? spanS * 0.5
+              : Math.min(Math.max(spanS * 0.5, 2.5), 16);
+    roofH = Math.min(roofH, h * (rs === 'spire' ? 0.65 : 0.55));
+    const eaveY = rs === 'flat' ? yTop : yTop - roofH;       // walls stop at the eave
+
+    const roofCol = cssColor(t['roof:colour']) ||
+      (rs === 'flat' ? col.clone().multiplyScalar(0.82)
+                     : new THREE.Color(ROOF_PAL[hash % ROOF_PAL.length]));
+
+    // procedural storefront ground floor on street-scale commercial/office buildings
+    const BAND = 5;
+    const hasStore = !b.isPart && minH === 0 && (vi === 0 || vi === 2 || vi === 4 || vi === 5) &&
+      (eaveY - ground) > BAND + 7 && areaM2 > 70;
+    const bandTop = hasStore ? ground + BAND : yBot;
 
     // walls: one quad per footprint edge, UVs tiling the window texture
     const wp = [], wuv = [], wc = [];
     for (let i = 0; i < pts.length; i++) {
       const a = pts[i], bb = pts[(i+1) % pts.length];
       const elen = Math.hypot(bb.x - a.x, bb.z - a.z); if (elen < 0.05) continue;
+      const push = (px, py, pz, u, v) => { wp.push(px, py, pz); wuv.push(u, v); wc.push(col.r, col.g, col.b); };
+      if (hasStore) {   // storefront band: own texture bucket, v=1 lands exactly at bandTop
+        const su1 = Math.max(1, Math.round(elen / STOREFRONT.cw));
+        const pushS = (px, py, pz, u, v) => { storePos.push(px, py, pz); storeUV.push(u, v); storeCol.push(col.r, col.g, col.b); };
+        const v0 = (yBot - (bandTop - BAND)) / BAND;         // below-grade lip repeats out of sight
+        pushS(a.x, yBot, a.z, 0, v0); pushS(bb.x, yBot, bb.z, su1, v0); pushS(bb.x, bandTop, bb.z, su1, 1);
+        pushS(a.x, yBot, a.z, 0, v0); pushS(bb.x, bandTop, bb.z, su1, 1); pushS(a.x, bandTop, a.z, 0, 1);
+      }
       // whole number of window columns per edge & floors up -> no clipped/partial windows,
       // rows line up across faces and the top edge lands on a full floor
-      const u1 = Math.max(1, Math.round(elen / CELL_W)), v1 = Math.max(1, Math.round((yTop - yBot) / CELL_H));
-      const push = (px, py, pz, u, v) => { wp.push(px, py, pz); wuv.push(u, v); wc.push(col.r, col.g, col.b); };
-      push(a.x, yBot, a.z, 0, 0);   push(bb.x, yBot, bb.z, u1, 0);  push(bb.x, yTop, bb.z, u1, v1);
-      push(a.x, yBot, a.z, 0, 0);   push(bb.x, yTop, bb.z, u1, v1); push(a.x, yTop, a.z, 0, v1);
+      const u1 = Math.max(1, Math.round(elen / CELL_W)), v1 = Math.max(1, Math.round((eaveY - bandTop) / CELL_H));
+      push(a.x, bandTop, a.z, 0, 0);   push(bb.x, bandTop, bb.z, u1, 0);  push(bb.x, eaveY, bb.z, u1, v1);
+      push(a.x, bandTop, a.z, 0, 0);   push(bb.x, eaveY, bb.z, u1, v1); push(a.x, eaveY, a.z, 0, v1);
     }
     if (wp.length) {
       const g = new THREE.BufferGeometry();
@@ -426,18 +588,81 @@ function buildWorld(data, lat0, lon0, radiusMi, heightAt, overture, playMi) {
       wallBuckets[vi].push(g);
     }
 
-    // roof: triangulated footprint at height h (shape Z negated to cancel rotateX mirror)
-    const shape = new THREE.Shape();
-    shape.moveTo(pts[0].x, -pts[0].z);
-    for (let i = 1; i < pts.length; i++) shape.lineTo(pts[i].x, -pts[i].z);
-    const rg = new THREE.ShapeGeometry(shape); rg.rotateX(-Math.PI/2);
-    const pa = rg.attributes.position.array; for (let i = 1; i < pa.length; i += 3) pa[i] = yTop;
-    if (rg.attributes.uv) rg.deleteAttribute('uv');
-    const rn = rg.attributes.position.count, rc = new Float32Array(rn * 3), rcol = col.clone().multiplyScalar(0.82);
-    for (let i = 0; i < rn; i++) { rc[i*3] = rcol.r; rc[i*3+1] = rcol.g; rc[i*3+2] = rcol.b; }
-    rg.setAttribute('color', new THREE.BufferAttribute(rc, 3));
-    roofGeos.push(rg);
-    collisionPolys.push(pts);
+    // ---- roof geometry by shape ----
+    if (rs === 'flat') {
+      // triangulated footprint at yTop (shape Z negated to cancel rotateX mirror)
+      const shape = new THREE.Shape();
+      shape.moveTo(pts[0].x, -pts[0].z);
+      for (let i = 1; i < pts.length; i++) shape.lineTo(pts[i].x, -pts[i].z);
+      const rg = new THREE.ShapeGeometry(shape); rg.rotateX(-Math.PI/2);
+      const pa = rg.attributes.position.array; for (let i = 1; i < pa.length; i += 3) pa[i] = yTop;
+      rg.deleteAttribute('uv'); rg.deleteAttribute('normal');   // merge needs matching attributes
+      const rn = rg.attributes.position.count, rc = new Float32Array(rn * 3);
+      for (let i = 0; i < rn; i++) { rc[i*3] = roofCol.r; rc[i*3+1] = roofCol.g; rc[i*3+2] = roofCol.b; }
+      rg.setAttribute('color', new THREE.BufferAttribute(rc, 3));
+      roofGeos.push(rg.toNonIndexed());   // the detail stream below is non-indexed; merge needs all-or-none
+      // parapet lip: a darker band above the roofline breaks the sheared-off-box look
+      if (!b.isPart && h > 15 && areaM2 > 60) {
+        const pc = col.clone().multiplyScalar(0.62);
+        for (let i = 0; i < pts.length; i++) {
+          const a = pts[i], q = pts[(i+1)%pts.length];
+          dQuad(a, yTop, q, yTop, q, yTop + 1.0, a, yTop + 1.0, pc);
+        }
+      }
+    } else if (rs === 'gabled' || rs === 'hipped') {
+      // ridge runs between the midpoints of the two SHORT edges of the quad
+      const e0 = Math.hypot(quad[1].x-quad[0].x, quad[1].z-quad[0].z);
+      const e1 = Math.hypot(quad[2].x-quad[1].x, quad[2].z-quad[1].z);
+      const s0 = e0 <= e1 ? 0 : 1;
+      const p0 = quad[s0], p1 = quad[(s0+1)%4], p2 = quad[(s0+2)%4], p3 = quad[(s0+3)%4];
+      let m0 = { x:(p0.x+p1.x)/2, z:(p0.z+p1.z)/2 }, m1 = { x:(p2.x+p3.x)/2, z:(p2.z+p3.z)/2 };
+      if (rs === 'hipped') {                                  // pull the ridge ends in -> sloped hips
+        const rl = Math.hypot(m1.x-m0.x, m1.z-m0.z) || 1;
+        const inset = Math.min(rl * 0.32, spanS * 0.5);
+        const ux = (m1.x-m0.x)/rl, uz = (m1.z-m0.z)/rl;
+        m0 = { x: m0.x + ux*inset, z: m0.z + uz*inset };
+        m1 = { x: m1.x - ux*inset, z: m1.z - uz*inset };
+      }
+      dQuad(p1, eaveY, p2, eaveY, m1, yTop, m0, yTop, roofCol);   // two roof planes
+      dQuad(p3, eaveY, p0, eaveY, m0, yTop, m1, yTop, roofCol);
+      const endCol = rs === 'gabled' ? col.clone().multiplyScalar(0.94) : roofCol; // wall-toned gable ends / roof-toned hips
+      dTri(p0.x, eaveY, p0.z, p1.x, eaveY, p1.z, m0.x, yTop, m0.z, endCol);
+      dTri(p2.x, eaveY, p2.z, p3.x, eaveY, p3.z, m1.x, yTop, m1.z, endCol);
+      // churches mapped WITHOUT 3D parts still get a modest tower + spire over one gable end
+      if (worship && !b.isPart && rs === 'gabled' && spanL > 12) {
+        const rl = Math.hypot(m1.x-m0.x, m1.z-m0.z) || 1;
+        const ux = (m1.x-m0.x)/rl, uz = (m1.z-m0.z)/rl, vx = -uz, vz = ux;
+        const tw = Math.min(Math.max(spanS * 0.34, 2.4), 5.5);
+        const cx = m0.x + ux * (tw * 0.7), cz = m0.z + uz * (tw * 0.7);
+        const cr = [
+          { x: cx + (ux+vx)*tw/2, z: cz + (uz+vz)*tw/2 }, { x: cx + (ux-vx)*tw/2, z: cz + (uz-vz)*tw/2 },
+          { x: cx - (ux+vx)*tw/2, z: cz - (uz+vz)*tw/2 }, { x: cx - (ux-vx)*tw/2, z: cz - (uz-vz)*tw/2 },
+        ];
+        const towerTop = yTop + roofH * 0.5 + tw * 0.6;
+        const wallC = col.clone().multiplyScalar(1.04), spireC = roofCol.clone().multiplyScalar(0.8);
+        for (let i = 0; i < 4; i++) dQuad(cr[i], yBot, cr[(i+1)%4], yBot, cr[(i+1)%4], towerTop, cr[i], towerTop, wallC);
+        for (let i = 0; i < 4; i++) dTri(cr[i].x, towerTop, cr[i].z, cr[(i+1)%4].x, towerTop, cr[(i+1)%4].z, cx, towerTop + tw*2.1, cz, spireC);
+      }
+    } else {
+      // pyramidal / spire / dome: fan from the eave ring to a peak at the centroid
+      const c = centroidOf(pts);
+      if (rs === 'dome') {                                    // intermediate ring bulges the profile
+        const midY = eaveY + roofH * 0.78;
+        for (let i = 0; i < pts.length; i++) {
+          const a = pts[i], q = pts[(i+1)%pts.length];
+          const ma = { x: a.x + (c.x-a.x)*0.45, z: a.z + (c.z-a.z)*0.45 };
+          const mq = { x: q.x + (c.x-q.x)*0.45, z: q.z + (c.z-q.z)*0.45 };
+          dQuad(a, eaveY, q, eaveY, mq, midY, ma, midY, roofCol);
+          dTri(ma.x, midY, ma.z, mq.x, midY, mq.z, c.x, yTop, c.z, roofCol);
+        }
+      } else {
+        for (let i = 0; i < pts.length; i++) {
+          const a = pts[i], q = pts[(i+1)%pts.length];
+          dTri(a.x, eaveY, a.z, q.x, eaveY, q.z, c.x, yTop, c.z, roofCol);
+        }
+      }
+    }
+    if (minH === 0) collisionPolys.push(pts);   // elevated parts don't block the street below
   }
   wallBuckets.forEach((geos, vi) => {
     if (!geos.length) return;
@@ -445,13 +670,28 @@ function buildWorld(data, lat0, lon0, radiusMi, heightAt, overture, playMi) {
     const mesh = new THREE.Mesh(merged, new THREE.MeshLambertMaterial({ map: FACADES[vi].tex, vertexColors: true, side: THREE.DoubleSide }));
     mesh.castShadow = true; mesh.receiveShadow = true; worldGroup.add(mesh);
   });
+  if (storePos.length) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(storePos, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(storeUV, 2));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(storeCol, 3));
+    g.computeVertexNormals();
+    const mesh = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ map: STOREFRONT.tex, vertexColors: true, side: THREE.DoubleSide }));
+    mesh.castShadow = true; mesh.receiveShadow = true; worldGroup.add(mesh);
+  }
+  if (detail.pos.length) {                     // shaped roofs/gables/parapets/steeples
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(detail.pos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(detail.col, 3));
+    roofGeos.push(g);
+  }
   if (roofGeos.length) {
     const merged = mergeGeometries(roofGeos, false); merged.computeVertexNormals();
     const mesh = new THREE.Mesh(merged, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }));
     mesh.castShadow = true; mesh.receiveShadow = true; worldGroup.add(mesh);
   }
 
-  buildHouses(residentialPolys, buildingPolys, roadLines);
+  buildHouses(residentialPolys, renderB, roadLines);
   buildTrees(treePoints, treedPolys);
   signPosts = [];                       // reset the shared sign-pole footprint registry
   buildTrafficLights(signalNodes, roadPolys);
@@ -463,14 +703,28 @@ function buildWorld(data, lat0, lon0, radiusMi, heightAt, overture, playMi) {
   gridW = Math.ceil(gsz / gridCell); gridH = Math.ceil(gsz / gridCell);
   grid = new Uint8Array(gridW * gridH);
   function rasterize(polys) {
+    // Scanline fill: per grid ROW, find the polygon's edge crossings once and fill the spans
+    // between them — O(rows·verts + cells) instead of pointInPoly per cell, which took 2+
+    // MINUTES for map-spanning polygons like the Lehigh River. Same result (cell-center,
+    // even-odd rule), >100x faster.
     for (const poly of polys) {
-      let minX = 1e9, maxX = -1e9, minZ = 1e9, maxZ = -1e9;
-      for (const p of poly) { if (p.x<minX)minX=p.x; if (p.x>maxX)maxX=p.x; if (p.z<minZ)minZ=p.z; if (p.z>maxZ)maxZ=p.z; }
-      const cx0 = Math.max(0, ((minX - gridMinX)/gridCell)|0), cx1 = Math.min(gridW-1, ((maxX - gridMinX)/gridCell)|0);
+      if (poly.length < 3) continue;
+      let minZ = 1e9, maxZ = -1e9;
+      for (const p of poly) { if (p.z<minZ)minZ=p.z; if (p.z>maxZ)maxZ=p.z; }
       const cz0 = Math.max(0, ((minZ - gridMinZ)/gridCell)|0), cz1 = Math.min(gridH-1, ((maxZ - gridMinZ)/gridCell)|0);
-      for (let cz = cz0; cz <= cz1; cz++) for (let cx = cx0; cx <= cx1; cx++) {
-        const wx = gridMinX + (cx+0.5)*gridCell, wz = gridMinZ + (cz+0.5)*gridCell;
-        if (pointInPoly(wx, wz, poly)) grid[cz*gridW + cx] = 1;
+      const xs = [];
+      for (let cz = cz0; cz <= cz1; cz++) {
+        const wz = gridMinZ + (cz+0.5)*gridCell;
+        xs.length = 0;
+        for (let i = 0, j = poly.length-1; i < poly.length; j = i++) {
+          const a = poly[i], b = poly[j];
+          if ((a.z > wz) !== (b.z > wz)) xs.push(a.x + (wz - a.z) / (b.z - a.z) * (b.x - a.x));
+        }
+        xs.sort((p, q) => p - q);
+        for (let k = 0; k + 1 < xs.length; k += 2) {
+          const cx0 = Math.max(0, Math.ceil((xs[k] - gridMinX)/gridCell - 0.5)), cx1 = Math.min(gridW-1, Math.floor((xs[k+1] - gridMinX)/gridCell - 0.5));
+          for (let cx = cx0; cx <= cx1; cx++) grid[cz*gridW + cx] = 1;
+        }
       }
     }
   }
