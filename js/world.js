@@ -643,11 +643,20 @@ function bridgeStructure(rawPts, hw, deckFn, out, onStreet) {
     quad(Lx[i],und[i],Lz[i], Lx[i+1],und[i+1],Lz[i+1], Lx[i+1],deck[i+1],Lz[i+1], Lx[i],deck[i],Lz[i]);
     quad(Rx[i],und[i],Rz[i], Rx[i+1],und[i+1],Rz[i+1], Rx[i+1],deck[i+1],Rz[i+1], Rx[i],deck[i],Rz[i]);
     // parapet RAILS along both edges (visible wall) + crash-wall segments so the car can't
-    // drive off the side and fall — guarding the deck's height band only (under-roads pass free)
-    quad(Lx[i],deck[i],Lz[i], Lx[i+1],deck[i+1],Lz[i+1], Lx[i+1],deck[i+1]+RAIL_H,Lz[i+1], Lx[i],deck[i]+RAIL_H,Lz[i]);
-    quad(Rx[i],deck[i],Rz[i], Rx[i+1],deck[i+1],Rz[i+1], Rx[i+1],deck[i+1]+RAIL_H,Rz[i+1], Rx[i],deck[i]+RAIL_H,Rz[i]);
-    addWallSeg(Lx[i],Lz[i], Lx[i+1],Lz[i+1], deck[i], RAIL_H + 1.5);
-    addWallSeg(Rx[i],Rz[i], Rx[i+1],Rz[i+1], deck[i], RAIL_H + 1.5);
+    // drive off the side and fall — but ONLY where the deck is meaningfully ABOVE the ground.
+    // At ramp ends, and where cross-streets meet or pass beside the ramp, the deck sits at
+    // street level; a crash wall there sealed the bridge shut (you couldn't drive onto the
+    // deck or cross next to the ramp). No drop -> nothing to fall off -> no wall.
+    const gy = terrain((pts[i].x + pts[i+1].x) / 2, (pts[i].z + pts[i+1].z) / 2);
+    const drop = deck[i] - gy;
+    if (drop > 0.9) {   // visible rail fades in as the deck lifts off the approach
+      quad(Lx[i],deck[i],Lz[i], Lx[i+1],deck[i+1],Lz[i+1], Lx[i+1],deck[i+1]+RAIL_H,Lz[i+1], Lx[i],deck[i]+RAIL_H,Lz[i]);
+      quad(Rx[i],deck[i],Rz[i], Rx[i+1],deck[i+1],Rz[i+1], Rx[i+1],deck[i+1]+RAIL_H,Rz[i+1], Rx[i],deck[i]+RAIL_H,Rz[i]);
+    }
+    if (drop > 1.6) {   // collision only over a real drop
+      addWallSeg(Lx[i],Lz[i], Lx[i+1],Lz[i+1], deck[i], RAIL_H + 1.5);
+      addWallSeg(Rx[i],Rz[i], Rx[i+1],Rz[i+1], deck[i], RAIL_H + 1.5);
+    }
   }
   // support pillars every ~36 m, where the deck is well above the ground
   for (let i = 6; i < n-6; i += 6) {
