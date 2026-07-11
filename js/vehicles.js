@@ -205,7 +205,10 @@ function wallBlocked(x, z, y) {
   for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
     const arr = wallSegs.get((bx + dx) + ',' + (bz + dz)); if (!arr) continue;
     for (const s of arr) {
-      if (y < s.y - 1.2 || y > s.y + s.h) continue;     // wrong height band -> this wall doesn't apply
+      // Wrong height band -> this wall doesn't apply. The band starts only 0.5 below the
+      // deck: any deeper caught roads passing UNDER low ramps (River St under Hill-to-Hill)
+      // and walled them shut; a car ON the deck sits exactly at s.y, so 0.5 is plenty.
+      if (y < s.y - 0.5 || y > s.y + s.h) continue;
       const ex = s.bx - s.ax, ez = s.bz - s.az, l2 = ex*ex + ez*ez || 1;
       let t = ((x - s.ax)*ex + (z - s.az)*ez) / l2; t = t < 0 ? 0 : t > 1 ? 1 : t;
       const px = s.ax + ex*t, pz = s.az + ez*t;

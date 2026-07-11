@@ -624,9 +624,10 @@ function ribbon(rawPts, hw, out, yFn) {
 }
 
 // Bridge structure: parapets, slab underside, and support pillars to the ground.
-// onStreet(x,z) (optional) reports whether a point sits on a non-bridge road surface, so
-// supports can be slid off cross-streets they'd otherwise land in the middle of.
-function bridgeStructure(rawPts, hw, deckFn, out, onStreet) {
+// streetLevel(x,z) (optional) returns the surface height of a non-bridge road covering that
+// point (else -Infinity) — used to keep supports off cross-streets and to OPEN the rails
+// where a street crosses the deck at its own level.
+function bridgeStructure(rawPts, hw, deckFn, out, streetLevel) {
   const pts = densify(rawPts, 3);                          // match the deck so the fascia follows it smoothly
   const n = pts.length; if (n < 2) return;
   const RAIL_H = 0.95;
@@ -644,19 +645,26 @@ function bridgeStructure(rawPts, hw, deckFn, out, onStreet) {
     quad(Rx[i],und[i],Rz[i], Rx[i+1],und[i+1],Rz[i+1], Rx[i+1],deck[i+1],Rz[i+1], Rx[i],deck[i],Rz[i]);
     // parapet RAILS along both edges (visible wall) + crash-wall segments so the car can't
     // drive off the side and fall — but ONLY where the deck is meaningfully ABOVE the ground.
-    // At ramp ends, and where cross-streets meet or pass beside the ramp, the deck sits at
-    // street level; a crash wall there sealed the bridge shut (you couldn't drive onto the
-    // deck or cross next to the ramp). No drop -> nothing to fall off -> no wall.
-    const gy = terrain((pts[i].x + pts[i+1].x) / 2, (pts[i].z + pts[i+1].z) / 2);
-    const drop = deck[i] - gy;
-    if (drop > 0.9) {   // visible rail fades in as the deck lifts off the approach
-      quad(Lx[i],deck[i],Lz[i], Lx[i+1],deck[i+1],Lz[i+1], Lx[i+1],deck[i+1]+RAIL_H,Lz[i+1], Lx[i],deck[i]+RAIL_H,Lz[i]);
-      quad(Rx[i],deck[i],Rz[i], Rx[i+1],deck[i+1],Rz[i+1], Rx[i+1],deck[i+1]+RAIL_H,Rz[i+1], Rx[i],deck[i]+RAIL_H,Rz[i]);
-    }
-    if (drop > 1.6) {   // collision only over a real drop
-      addWallSeg(Lx[i],Lz[i], Lx[i+1],Lz[i+1], deck[i], RAIL_H + 1.5);
-      addWallSeg(Rx[i],Rz[i], Rx[i+1],Rz[i+1], deck[i], RAIL_H + 1.5);
-    }
+    // At ramp ends the deck sits at street level; a crash wall there sealed the bridge shut.
+    // And where a street CROSSES the deck at (roughly) its own level — low ramps over dipped
+    // terrain, e.g. River St under Hill-to-Hill — the terrain-drop test alone kept a wall
+    // across the street. Each SIDE is judged at its own rail line: no drop or an at-grade
+    // street there -> no rail/wall on that side. Genuine underpasses (street 2.4+ below the
+    // deck) keep their walls.
+    const railMode = (x1, z1, x2, z2) => {          // 0 none | 1 visible rail | 2 rail + crash wall
+      const mx = (x1 + x2) / 2, mz = (z1 + z2) / 2;
+      const drop = deck[i] - terrain(mx, mz);
+      if (drop <= 0.9) return 0;
+      const sy = streetLevel ? streetLevel(mx, mz) : -Infinity;
+      if (sy > -Infinity && deck[i] < sy + 2.4) return 0;
+      return drop > 1.6 ? 2 : 1;
+    };
+    const mL = railMode(Lx[i], Lz[i], Lx[i+1], Lz[i+1]);
+    const mR = railMode(Rx[i], Rz[i], Rx[i+1], Rz[i+1]);
+    if (mL) quad(Lx[i],deck[i],Lz[i], Lx[i+1],deck[i+1],Lz[i+1], Lx[i+1],deck[i+1]+RAIL_H,Lz[i+1], Lx[i],deck[i]+RAIL_H,Lz[i]);
+    if (mR) quad(Rx[i],deck[i],Rz[i], Rx[i+1],deck[i+1],Rz[i+1], Rx[i+1],deck[i+1]+RAIL_H,Rz[i+1], Rx[i],deck[i]+RAIL_H,Rz[i]);
+    if (mL === 2) addWallSeg(Lx[i],Lz[i], Lx[i+1],Lz[i+1], deck[i], RAIL_H + 1.5);
+    if (mR === 2) addWallSeg(Rx[i],Rz[i], Rx[i+1],Rz[i+1], deck[i], RAIL_H + 1.5);
   }
   // support pillars every ~36 m, where the deck is well above the ground
   for (let i = 6; i < n-6; i += 6) {
@@ -664,11 +672,12 @@ function bridgeStructure(rawPts, hw, deckFn, out, onStreet) {
     // default sample lands on pavement, slide along the span to the nearest clear point;
     // if the whole stretch is over road, skip the pillar rather than block the street.
     let bi = i;
-    if (onStreet && onStreet(pts[bi].x, pts[bi].z)) {
+    const onSt = (x, z) => streetLevel && streetLevel(x, z) > -Infinity;
+    if (onSt(pts[bi].x, pts[bi].z)) {
       let found = -1;
       for (let d = 1; d <= 5 && found < 0; d++) {
-        if (i-d >= 1   && !onStreet(pts[i-d].x, pts[i-d].z)) found = i-d;
-        else if (i+d <= n-2 && !onStreet(pts[i+d].x, pts[i+d].z)) found = i+d;
+        if (i-d >= 1   && !onSt(pts[i-d].x, pts[i-d].z)) found = i-d;
+        else if (i+d <= n-2 && !onSt(pts[i+d].x, pts[i+d].z)) found = i+d;
       }
       if (found < 0) continue;
       bi = found;

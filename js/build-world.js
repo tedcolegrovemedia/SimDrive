@@ -299,14 +299,24 @@ function buildWorld(data, lat0, lon0, radiusMi, heightAt, overture, playMi) {
     let t = l2 ? ((px-ax)*dx + (pz-az)*dz) / l2 : 0; t = t < 0 ? 0 : t > 1 ? 1 : t;
     return Math.hypot(px - (ax+dx*t), pz - (az+dz*t));
   };
-  const onStreet = (x, z) => {
+  // Street level at a point: road-surface height of the nearest NON-BRIDGE road whose
+  // pavement covers (x,z), else -Infinity. "Is on a street" = result > -Infinity; bridge
+  // rails also compare the deck height against it to stay open at at-grade crossings.
+  const streetLevelAt = (x, z) => {
     for (const r of roadPolys) {
       if (r.bridge || r.pts.length < 2) continue;
-      const margin = r.w/2 + 1.7;
-      for (let i = 0; i < r.pts.length-1; i++)
-        if (distToSeg(x, z, r.pts[i].x, r.pts[i].z, r.pts[i+1].x, r.pts[i+1].z) < margin) return true;
+      const margin = r.w/2 + 1.9;
+      for (let i = 0; i < r.pts.length-1; i++) {
+        const a = r.pts[i], b = r.pts[i+1];
+        const dx = b.x-a.x, dz = b.z-a.z, l2 = dx*dx + dz*dz;
+        let t = l2 ? ((x-a.x)*dx + (z-a.z)*dz) / l2 : 0; t = t < 0 ? 0 : t > 1 ? 1 : t;
+        const px = a.x+dx*t, pz = a.z+dz*t;
+        // roadY, not raw surfaceHeight: streets near water ride the water-clamped level
+        // (River St sits 3+ m above the dipped creek-bank DEM)
+        if (Math.hypot(x-px, z-pz) < margin) return roadY(px, pz);
+      }
     }
-    return false;
+    return -Infinity;
   };
   for (const r of roadPolys) {
     const pts = r.pts; roadLines.push(pts); const hw = r.w / 2;
@@ -338,7 +348,7 @@ function buildWorld(data, lat0, lon0, radiusMi, heightAt, overture, playMi) {
         const eEnd   = isJoint(b.x, b.z) ? plateau : roadY(b.x, b.z) - 0.2;
         const deckFn = (x, z, frac) => { const base = eStart + (eEnd - eStart) * frac; return base + Math.max(0, plateau - base) * bridgeBump(frac) + 0.2; };
         ribbon(pts, hw, roadPos, deckFn);
-        bridgeStructure(pts, hw, deckFn, bridgePos, onStreet);
+        bridgeStructure(pts, hw, deckFn, bridgePos, streetLevelAt);
         bridges.push({ pts: dd, hw, eStart, eEnd, plateau, waterY });
       } else {
         ribbon(pts, hw, roadPos, roadY);
