@@ -16,8 +16,10 @@ const TREE_SPECIES = [
   { geo: () => _columnarGeo,  cols: COLUMNAR_COLS, offY: 4.5, shadowR: 1.3 },
 ];
 function buildTrees(treePoints, treedPolys, scrubPolys, yardBushPts) {
-  // mapped trees are mostly street/yard trees -> lean deciduous
-  const pts = treePoints.map(p => ({ x: p.x, z: p.z, sp: Math.random() < 0.65 ? 0 : (Math.random() < 0.75 ? 1 : 2) }));
+  // mapped/wild trees lean deciduous; points may carry their own species (sp) and
+  // height scale (sc) — orchard grids use that for small uniform planted trees
+  const pts = treePoints.map(p => ({ x: p.x, z: p.z, sc: p.sc,
+    sp: p.sp !== undefined ? p.sp : (Math.random() < 0.65 ? 0 : (Math.random() < 0.75 ? 1 : 2)) }));
   // scatter through wooded polygons on a jittered grid; each wood gets its own
   // conifer/deciduous mix so separate stands look different from each other
   outer:
@@ -30,7 +32,7 @@ function buildTrees(treePoints, treedPolys, scrubPolys, yardBushPts) {
         const jx = x + (Math.random()-0.5)*step, jz = z + (Math.random()-0.5)*step;
         if (pointInPoly(jx, jz, poly))
           pts.push({ x: jx, z: jz, sp: Math.random() < coniferBias ? 1 : (Math.random() < 0.06 ? 2 : 0) });
-        if (pts.length >= 3500) break outer;
+        if (pts.length >= 4500) break outer;   // headroom: countryside scatter shares the budget now
       }
     }
   }
@@ -51,7 +53,7 @@ function buildTrees(treePoints, treedPolys, scrubPolys, yardBushPts) {
       for (let i = 0; i < list.length; i++) {
         const p = list[i], gy = terrain(p.x, p.z);
         // independent height/width scale + a slight lean — breaks the cloned look
-        const hsc = 0.7 + Math.random() * 0.9, wsc = hsc * (0.78 + Math.random() * 0.5);
+        const hsc = p.sc || (0.7 + Math.random() * 0.9), wsc = hsc * (0.78 + Math.random() * 0.5);
         e.set((Math.random()-0.5)*0.1, Math.random()*Math.PI*2, (Math.random()-0.5)*0.1);
         q.setFromEuler(e);
         s.set(wsc, hsc, wsc);
@@ -120,6 +122,52 @@ function buildTrees(treePoints, treedPolys, scrubPolys, yardBushPts) {
     blobs.instanceMatrix.needsUpdate = true;
     blobs.frustumCulled = false;
     worldGroup.add(blobs);
+  }
+}
+
+// Countryside props: instanced boulders + wildflower patches for the open-land scatter.
+const ROCK_COLS = [0x8d8a84, 0x7c7a76, 0x9a968e, 0x6f6d6a];
+const FLOWER_COLS = [0xd66a8e, 0xe8d05a, 0xf2f0e8, 0xb07ad0, 0xe09a4a];
+function buildCountryProps(rockPts, flowerPts) {
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), col = new THREE.Color();
+  const e = new THREE.Euler(), s = new THREE.Vector3();
+  if (rockPts.length) {
+    const rocks = new THREE.InstancedMesh(_rockGeo, new THREE.MeshLambertMaterial(), rockPts.length);
+    for (let i = 0; i < rockPts.length; i++) {
+      const p = rockPts[i], sc = 0.4 + Math.random() * 1.1;
+      e.set(Math.random()*0.5, Math.random()*Math.PI*2, Math.random()*0.5); q.setFromEuler(e);
+      s.set(sc * (0.7 + Math.random()*0.7), sc * 0.62, sc * (0.7 + Math.random()*0.7));
+      m.compose(new THREE.Vector3(p.x, surfaceHeight(p.x, p.z) + sc*0.12, p.z), q, s);
+      rocks.setMatrixAt(i, m);
+      rocks.setColorAt(i, col.set(ROCK_COLS[(Math.random()*ROCK_COLS.length)|0]));
+    }
+    rocks.instanceMatrix.needsUpdate = true;
+    if (rocks.instanceColor) rocks.instanceColor.needsUpdate = true;
+    rocks.frustumCulled = false;                 // instanced meshes cull against the origin — see buildTrees
+    worldGroup.add(rocks);
+  }
+  if (flowerPts.length) {
+    // each scatter point becomes a little patch of 3-6 coloured blobs
+    const blobs = [];
+    for (const p of flowerPts) {
+      const n = 3 + (Math.random()*4|0), c = FLOWER_COLS[(Math.random()*FLOWER_COLS.length)|0];
+      for (let j = 0; j < n; j++)
+        blobs.push({ x: p.x + (Math.random()-0.5)*2.6, z: p.z + (Math.random()-0.5)*2.6, c });
+    }
+    const flowers = new THREE.InstancedMesh(_flowerGeo, new THREE.MeshLambertMaterial(), blobs.length);
+    const up = new THREE.Vector3(0, 1, 0);
+    for (let i = 0; i < blobs.length; i++) {
+      const b = blobs[i], sc = 0.12 + Math.random() * 0.12;
+      q.setFromAxisAngle(up, Math.random()*Math.PI*2);
+      s.set(sc, sc, sc);
+      m.compose(new THREE.Vector3(b.x, surfaceHeight(b.x, b.z) + sc*0.6, b.z), q, s);
+      flowers.setMatrixAt(i, m);
+      flowers.setColorAt(i, col.set(b.c));
+    }
+    flowers.instanceMatrix.needsUpdate = true;
+    if (flowers.instanceColor) flowers.instanceColor.needsUpdate = true;
+    flowers.frustumCulled = false;
+    worldGroup.add(flowers);
   }
 }
 

@@ -218,6 +218,20 @@ const asphaltTex = canvasTex(128, g => {
     for (let s = 0; s < 5; s++) { x += Math.random()*22 - 11; y += Math.random()*22 - 11; g.lineTo(x, y); }
     g.stroke(); }
 });
+// Farmland: directional crop rows + stubble speckle, drawn light so the material
+// colour tints it wheat-tan. Fields read as worked land instead of more lawn.
+const cropTex = canvasTex(128, g => {
+  g.fillStyle = '#dcd6c0'; g.fillRect(0, 0, 128, 128);
+  for (let x = 0; x < 128; x += 8) {                           // crop rows
+    g.fillStyle = 'rgba(95,85,45,0.16)'; g.fillRect(x, 0, 3, 128);
+    g.fillStyle = 'rgba(245,240,220,0.10)'; g.fillRect(x + 4, 0, 2, 128);
+  }
+  for (let i = 0; i < 700; i++) { const v = 195 + (Math.random()*45|0);
+    g.fillStyle = `rgba(${v},${v-6},${v-40},0.35)`; g.fillRect(Math.random()*128|0, Math.random()*128|0, 1, 2); }
+});
+// Countryside props: low-poly boulders and tiny flower blobs for the wild scatter.
+const _rockGeo = new THREE.IcosahedronGeometry(1, 0).scale(1, 0.62, 1);
+const _flowerGeo = new THREE.IcosahedronGeometry(1, 0);
 // Water: faint ripple bands. Every texture instance used on water registers in
 // waterTexes; the render loop scrolls their offsets so rivers/lakes visibly drift.
 const waterTexes = [];

@@ -64,6 +64,7 @@ function buildWorld(data, lat0, lon0, radiusMi, heightAt, overture, playMi) {
   // ---- sort elements ----
   const roadPolys = [], buildingPolys = [], partPolys = [], waterPolys = [], waterLines = [], greenPolys = [], residentialPolys = [], parkingPolys = [];
   const treePoints = [], treedPolys = [], scrubPolys = []; // mapped trees + wooded areas (trees) + scrub (bushes)
+  const farmPolys = [], orchardPolys = [];  // farmland -> crop-row fields; orchards -> planted tree grids
   const signalNodes = [], stopNodes = [];  // traffic lights & stop signs
   const GREEN_LEISURE = /park|garden|pitch|golf_course|playground|recreation_ground/;
   const GREEN_LANDUSE = /grass|forest|meadow|recreation_ground|village_green|cemetery|farmland|orchard|allotments/;
@@ -136,6 +137,8 @@ function buildWorld(data, lat0, lon0, radiusMi, heightAt, overture, playMi) {
     else if (t.natural === 'water' || t.water || t.waterway === 'riverbank') waterPolys.push(pts);
     else if (t.waterway && WATERWAY_W[t.waterway]) waterLines.push({ pts, w: WATERWAY_W[t.waterway] });
     else if (t.landuse === 'residential') residentialPolys.push(pts);
+    else if (t.landuse === 'farmland') farmPolys.push(pts);                       // crop rows, not lawn
+    else if (t.landuse === 'orchard') { greenPolys.push(pts); orchardPolys.push(pts); } // planted tree grid
     else if (GREEN_LEISURE.test(t.leisure || '') || GREEN_LANDUSE.test(t.landuse || '') || GREEN_NATURAL.test(t.natural || '')) {
       greenPolys.push(pts);
       if (t.natural === 'wood' || t.landuse === 'forest') treedPolys.push(pts);
@@ -215,6 +218,7 @@ function buildWorld(data, lat0, lon0, radiusMi, heightAt, overture, playMi) {
     return mesh;
   }
   fillShapes(greenPolys, 0x7cb84f, 0.06, false, grassTex, 9);     // brighter SimCity green grass/parks/woods
+  fillShapes(farmPolys, 0xc2b276, 0.05, false, cropTex, 14);      // wheat-tan worked fields with crop rows
   fillShapes(parkingPolys, 0x5d6168, 0.13, false, asphaltTex, 7); // parking lots: flat asphalt, a touch lighter than the streets
   const waterMesh = fillShapes(waterPolys, 0x3589cf, 0.1, true, waterTex, 16); // lakes/rivers: flat, bright, sits in the basin
   if (waterMesh) waterTexes.push(waterMesh.material.map);         // render loop scrolls it — water drifts
@@ -747,8 +751,82 @@ function buildWorld(data, lat0, lon0, radiusMi, heightAt, overture, playMi) {
     mesh.castShadow = true; mesh.receiveShadow = true; worldGroup.add(mesh);
   }
 
+  // ---- countryside scatter: the open land between/beyond the streets was a bare
+  // grass plane. Fill it with noise-CLUMPED wild trees, bushes, rocks and wildflower
+  // patches (clumps read as natural copses; uniform scatter reads as static). Keeps
+  // clear of roads, buildings, water, residential blocks (yards have their own
+  // plantings), parking and farmland. Orchards get regular planted grids instead.
+  const wildBushPts = [], rockPts = [], flowerPts = [];
+  {
+    // value noise for clumping (smoothstep-blended random lattice, ~feature size 1/scale)
+    const nseed = Math.random() * 1000;
+    const h2 = (i, j) => { const s = Math.sin(i*127.1 + j*311.7 + nseed) * 43758.5453; return s - Math.floor(s); };
+    const vnoise = (x, z) => {
+      const i = Math.floor(x), j = Math.floor(z), fx = x-i, fz = z-j;
+      const a = h2(i,j), b = h2(i+1,j), c = h2(i,j+1), d = h2(i+1,j+1);
+      const ux = fx*fx*(3-2*fx), uz = fz*fz*(3-2*fz);
+      return a + (b-a)*ux + (c-a)*uz + (a-b-c+d)*ux*uz;
+    };
+    // stay off the road network: mark cells around sampled centreline points
+    const RC = 12, roadSet = new Set(), rk = (x, z) => Math.round(x/RC) + '_' + Math.round(z/RC);
+    for (const line of roadLines) for (let i = 0; i < line.length - 1; i++) {
+      const a = line[i], b = line[i+1], len = Math.hypot(b.x-a.x, b.z-a.z) || 1;
+      for (let d = 0; d <= len; d += RC*0.7) {
+        const x = a.x + (b.x-a.x)*d/len, z = a.z + (b.z-a.z)*d/len;
+        for (let ox = -1; ox <= 1; ox++) for (let oz = -1; oz <= 1; oz++)
+          roadSet.add(Math.round(x/RC+ox) + '_' + Math.round(z/RC+oz));
+      }
+    }
+    // coarse bbox index over every rendered footprint (OSM + Overture)
+    const BC = 40, bMap = new Map();
+    for (const b of renderB) {
+      const bb = bboxOf(b.pts);
+      for (let gz = Math.floor(bb.z0/BC); gz <= Math.floor(bb.z1/BC); gz++)
+        for (let gx = Math.floor(bb.x0/BC); gx <= Math.floor(bb.x1/BC); gx++) {
+          const k = gx + '_' + gz; let arr = bMap.get(k); if (!arr) { arr = []; bMap.set(k, arr); } arr.push(bb);
+        }
+    }
+    const inBuilding = (x, z) => {
+      const arr = bMap.get(Math.floor(x/BC) + '_' + Math.floor(z/BC));
+      if (arr) for (const bb of arr) if (x >= bb.x0-1 && x <= bb.x1+1 && z >= bb.z0-1 && z <= bb.z1+1) return true;
+      return false;
+    };
+    const avoid = [...residentialPolys, ...parkingPolys, ...farmPolys].map(p => ({ p, bb: bboxOf(p) }));
+    const inAvoid = (x, z) => {
+      for (const a of avoid) if (x >= a.bb.x0 && x <= a.bb.x1 && z >= a.bb.z0 && z <= a.bb.z1 && pointInPoly(x, z, a.p)) return true;
+      return false;
+    };
+    const open = (x, z) => !roadSet.has(rk(x, z)) && !inBuilding(x, z) && !nearRenderedWater(x, z) && !inAvoid(x, z);
+
+    const lim = half - 15, step = 13;
+    let nT = 0, nB = 0, nR = 0, nF = 0;   // caps: trees/bushes/rocks/flower patches
+    for (let x = -lim; x < lim; x += step) {
+      for (let z = -lim; z < lim; z += step) {
+        const n = vnoise(x * 0.016, z * 0.016);            // ~60 m clumps
+        if (n < 0.56) continue;                            // only inside clumps
+        if (Math.random() > (n - 0.56) * 3.2) continue;    // denser toward clump cores
+        const jx = x + (Math.random()-0.5)*step, jz = z + (Math.random()-0.5)*step;
+        if (!open(jx, jz)) continue;
+        const r = Math.random();
+        if (r < 0.50)      { if (nT++ < 1600) treePoints.push({ x: jx, z: jz }); }
+        else if (r < 0.82) { if (nB++ < 1300) wildBushPts.push({ x: jx, z: jz }); }
+        else if (r < 0.90) { if (nR++ < 350)  rockPts.push({ x: jx, z: jz }); }
+        else               { if (nF++ < 600)  flowerPts.push({ x: jx, z: jz }); }
+      }
+    }
+    // orchards: rows of small uniform trees on a planted grid (reads as agriculture)
+    let nO = 0;
+    for (const poly of orchardPolys) {
+      const bb = bboxOf(poly);
+      for (let x = bb.x0 + 4; x < bb.x1 && nO < 800; x += 7.5)
+        for (let z = bb.z0 + 4; z < bb.z1 && nO < 800; z += 7.5)
+          if (pointInPoly(x, z, poly)) { treePoints.push({ x, z, sp: 0, sc: 0.5 + Math.random()*0.15 }); nO++; }
+    }
+  }
+
   const yardBushPts = buildHouses(residentialPolys, renderB, roadLines) || [];
-  buildTrees(treePoints, treedPolys, scrubPolys, yardBushPts);
+  buildTrees(treePoints, treedPolys, scrubPolys, yardBushPts.concat(wildBushPts));
+  buildCountryProps(rockPts, flowerPts);
   signPosts = [];                       // reset the shared sign-pole footprint registry
   buildTrafficLights(signalNodes, roadPolys);
   buildStopSigns(stopNodes, roadPolys);
