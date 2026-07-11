@@ -14,6 +14,25 @@ addEventListener('keydown', e => {
 });
 addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
 
+// Touch driving controls: the on-screen buttons set the SAME `keys` flags the keyboard
+// uses, so the physics code doesn't know or care which input is active. Pointer events
+// (one pointer per button) give free multi-touch: steer with one thumb, gas with the other.
+const IS_TOUCH = matchMedia('(pointer: coarse)').matches;
+function bindTouchBtn(id, key) {
+  const el = document.getElementById(id);
+  const on  = e => { e.preventDefault(); keys[key] = true; el.classList.add('on');
+    try { el.setPointerCapture(e.pointerId); } catch (err) {} };   // capture keeps pointerup on this button if the thumb drifts
+  const off = e => { e.preventDefault(); keys[key] = false; el.classList.remove('on'); };
+  el.addEventListener('pointerdown', on);
+  el.addEventListener('pointerup', off);
+  el.addEventListener('pointercancel', off);
+  el.addEventListener('contextmenu', e => e.preventDefault()); // no long-press menu mid-drive
+}
+bindTouchBtn('tLeft', 'a'); bindTouchBtn('tRight', 'd');
+bindTouchBtn('tGas', 'w');  bindTouchBtn('tBrake', 's');
+// Camera button mirrors the C key (the only way to switch views on a phone)
+document.getElementById('camView').addEventListener('click', () => { chaseCam = !chaseCam; });
+
 let audioCtx;
 function horn() {
   try {
@@ -33,9 +52,15 @@ function horn() {
 function resize() {
   const w = window.innerWidth, h = window.innerHeight;
   renderer.setSize(w, h, false);
-  camera.aspect = w / h; camera.updateProjectionMatrix();
+  camera.aspect = w / h;
+  // Portrait phones: a fixed 72° VERTICAL fov leaves a ~40° horizontal tunnel. Widen the
+  // vertical fov so the horizontal view stays road-usable (capped so it doesn't fisheye).
+  camera.fov = camera.aspect >= 1 ? 72
+    : Math.min(100, 2 * Math.atan(Math.tan(36 * Math.PI/180) / camera.aspect) * 180/Math.PI);
+  camera.updateProjectionMatrix();
 }
 addEventListener('resize', resize);
+addEventListener('orientationchange', () => setTimeout(resize, 250)); // iOS reports stale sizes during rotation
 
 const fpsEl = document.getElementById('fps');
 

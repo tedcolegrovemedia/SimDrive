@@ -1,0 +1,42 @@
+/* ---------- Touch driving controls (coarse-pointer devices only) ---------- */
+#touch { position: fixed; inset: 0; z-index: 8; display: none; pointer-events: none; }
+.tc { position: absolute; bottom: calc(174px + env(safe-area-inset-bottom, 0px)); display: flex; gap: 14px; }
+.tc-left { left: calc(14px + env(safe-area-inset-left, 0px)); }
+.tc-right { right: calc(14px + env(safe-area-inset-right, 0px)); flex-direction: column; }
+#touch button {
+  pointer-events: auto; width: 66px; height: 66px; border-radius: 50%;
+  border: 1px solid rgba(255,255,255,.35); background: rgba(10,14,20,.42); color: #fff;
+  font-size: 24px; line-height: 1; font-family: inherit;
+  touch-action: none; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent;
+  box-shadow: 0 4px 14px rgba(0,0,0,.35);
+}
+#touch button.on { background: rgba(255,213,74,.55); border-color: rgba(255,213,74,.8); color: #20242e; }
+
+/* ---------- Small screens: compact dashboard + picker so the game fits a phone ---------- */
+@media (max-width: 760px), (max-height: 520px) {
+  #dashboard { height: 108px; padding: 0 12px 8px; gap: 10px; }
+  #dashboard::after { height: 86px; border-radius: 46% 46% 0 0 / 26px 26px 0 0; }
+  #dashboard::before { bottom: 80px; }
+  #speedHud { width: 92px; height: 92px; }
+  .info-screen { width: 76px; height: 76px; border-radius: 9px; }
+  #mini { width: 76px; height: 76px; }
+  .dash-side { padding-bottom: 2px; gap: 7px; }
+  .gear-readout { font-size: 12px; letter-spacing: 3px; }
+  .vent { display: none; }
+  .tc { bottom: calc(122px + env(safe-area-inset-bottom, 0px)); }
+  #topbtns { top: 8px; right: 8px; gap: 6px; }
+  #topbtns button { padding: 6px 9px; font-size: 11px; }
+  #help { top: 44px; right: 8px; }
+}
+
+/* picker panel: stack the controls into tidy rows on narrow screens */
+@media (max-width: 640px) {
+  #panel { gap: 8px; padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px)); }
+  #panel .sub { display: none; }
+  #panel h1 { width: 100%; margin: 0; font-size: 15px; }
+  #search { flex: 1 1 100%; min-width: 0; font-size: 16px; } /* 16px stops iOS zoom-on-focus */
+  #geoBtn { flex: 1; }
+  .rad-group { flex: 2; }
+  .rad { flex: 1; text-align: center; padding: 8px 4px; }
+  #go { flex: 1 1 100%; padding: 12px; }
+}

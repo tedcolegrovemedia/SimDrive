@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <title>Sim-Drive</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <link rel="stylesheet" href="css/main.css" />
@@ -40,6 +40,7 @@
 
 <!-- top-right buttons + Controls popover -->
 <div id="topbtns">
+  <button id="camView">🎥 Camera</button>
   <button id="controls">⌨ Controls</button>
   <button id="newLoc">⌖ New location</button>
 </div>
@@ -51,6 +52,18 @@
   <div class="help-row"><span><kbd>C</kbd></span> <span>camera</span></div>
 </div>
 <div id="fps"></div>
+
+<!-- Touch driving controls (shown only on coarse-pointer devices while driving) -->
+<div id="touch">
+  <div class="tc tc-left">
+    <button id="tLeft" aria-label="steer left">◀</button>
+    <button id="tRight" aria-label="steer right">▶</button>
+  </div>
+  <div class="tc tc-right">
+    <button id="tGas" aria-label="accelerate">▲</button>
+    <button id="tBrake" aria-label="brake / reverse">▼</button>
+  </div>
+</div>
 
 <div id="dashboard">
   <div class="dash-cluster"><canvas id="speedHud" width="200" height="200"></canvas></div>

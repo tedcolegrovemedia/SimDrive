@@ -188,7 +188,7 @@ backBtn.addEventListener('click', () => { loadingEl.style.display = 'none'; star
 document.getElementById('newLoc').addEventListener('click', () => {
   try { localStorage.removeItem(SESSION_KEY); } catch (e) {} // deliberately picking a new area -> refresh shows the picker
   worldReady = false;
-  ['topbtns','fps','dashboard'].forEach(id => document.getElementById(id).style.display = 'none');
+  ['topbtns','fps','dashboard','touch'].forEach(id => document.getElementById(id).style.display = 'none');
   document.getElementById('help').classList.add('hidden');
   startEl.style.display = 'flex'; map.invalidateSize(); updatePreview(); warmDuck();
 });
@@ -205,6 +205,8 @@ function startDriving() {
   document.getElementById('fps').style.display = 'none';     // FPS hidden until Controls is opened
   document.getElementById('help').classList.add('hidden');   // popover starts closed
   document.getElementById('dashboard').style.display = 'flex';
+  // on-screen driving buttons for touch devices (IS_TOUCH defined in main.js)
+  document.getElementById('touch').style.display = IS_TOUCH ? 'block' : 'none';
   resize();
   saveSession(); // persist the area immediately so a refresh resumes even before the first periodic save
 }
