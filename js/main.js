@@ -33,6 +33,14 @@ bindTouchBtn('tGas', 'w');  bindTouchBtn('tBrake', 's');
 // Camera button mirrors the C key (the only way to switch views on a phone)
 document.getElementById('camView').addEventListener('click', () => { chaseCam = !chaseCam; });
 
+// Build stamp in the Controls popover: newest Last-Modified among the loaded app files
+// (set by bootstrap.js). Lets anyone confirm which deploy their device is actually running.
+if (window.__buildStamp) {
+  const d = new Date(window.__buildStamp);
+  document.getElementById('buildStamp').innerHTML =
+    '<span style="opacity:.55">build</span> <span>' + d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) + '</span>';
+}
+
 let audioCtx;
 function horn() {
   try {
