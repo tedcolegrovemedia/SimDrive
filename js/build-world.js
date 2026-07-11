@@ -299,6 +299,27 @@ function buildWorld(data, lat0, lon0, radiusMi, heightAt, overture, playMi) {
     let t = l2 ? ((px-ax)*dx + (pz-az)*dz) / l2 : 0; t = t < 0 ? 0 : t > 1 ? 1 : t;
     return Math.hypot(px - (ax+dx*t), pz - (az+dz*t));
   };
+  // Merge/fork gores: junction nodes where 3+ drivable ways meet, or 2 ways of different
+  // widths join (a ramp meeting a mainline). Bridge rails must OPEN near these — at an
+  // elevated on-ramp merge (Main St onto the PA-378 viaduct) the mainline's edge rail
+  // otherwise runs straight across the ramp's path as a crash wall, sealing the merge.
+  // Plain span-to-span joints (2 same-width ways) keep their rails.
+  const jkey = (x, z) => Math.round(x) + '_' + Math.round(z);
+  const jmap = new Map();
+  for (const r of roadPolys) {
+    if (r.pts.length < 2) continue;
+    for (const e of [r.pts[0], r.pts[r.pts.length - 1]]) {
+      const k = jkey(e.x, e.z);
+      let j = jmap.get(k); if (!j) { j = { x: e.x, z: e.z, n: 0, widths: new Set() }; jmap.set(k, j); }
+      j.n++; j.widths.add(r.w);
+    }
+  }
+  const mergeNodes = [...jmap.values()].filter(j => j.n >= 3 || j.widths.size >= 2);
+  const nearMerge = (x, z) => {
+    for (const j of mergeNodes) { const dx = x - j.x, dz = z - j.z; if (dx*dx + dz*dz < 26*26) return true; }
+    return false;
+  };
+
   // Street level at a point: road-surface height of the nearest NON-BRIDGE road whose
   // pavement covers (x,z), else -Infinity. "Is on a street" = result > -Infinity; bridge
   // rails also compare the deck height against it to stay open at at-grade crossings.
@@ -348,7 +369,7 @@ function buildWorld(data, lat0, lon0, radiusMi, heightAt, overture, playMi) {
         const eEnd   = isJoint(b.x, b.z) ? plateau : roadY(b.x, b.z) - 0.2;
         const deckFn = (x, z, frac) => { const base = eStart + (eEnd - eStart) * frac; return base + Math.max(0, plateau - base) * bridgeBump(frac) + 0.2; };
         ribbon(pts, hw, roadPos, deckFn);
-        bridgeStructure(pts, hw, deckFn, bridgePos, streetLevelAt);
+        bridgeStructure(pts, hw, deckFn, bridgePos, streetLevelAt, nearMerge);
         bridges.push({ pts: dd, hw, eStart, eEnd, plateau, waterY });
       } else {
         ribbon(pts, hw, roadPos, roadY);
