@@ -548,7 +548,8 @@ function buildWorld(data, lat0, lon0, radiusMi, heightAt, overture, playMi) {
     else if (h > 26) vi = (hash % 4 === 0) ? 4 : 0;          // tall: office, occasional glass
     else if (h > 14) vi = [0, 2, 2, 5][hash % 4];            // mid: office / commercial / brick
     else             vi = [1, 1, 5, 3][hash % 4];            // low: residential / brick / industrial
-    const CELL_W = FACADES[vi].cw, CELL_H = FACADES[vi].ch;
+    const CELL_W = FACADES[vi].cw, CELL_H = FACADES[vi].ch, FNC = FACADES[vi].n || 1;
+    const ov = hash % FNC;              // atlas row offset: same per building so floors line up across faces
 
     const worship = t.amenity === 'place_of_worship' ||
       /^(church|chapel|cathedral|mosque|temple|synagogue|monastery)$/.test(t.building || '');
@@ -600,17 +601,20 @@ function buildWorld(data, lat0, lon0, radiusMi, heightAt, overture, playMi) {
       const elen = Math.hypot(bb.x - a.x, bb.z - a.z); if (elen < 0.05) continue;
       const push = (px, py, pz, u, v) => { wp.push(px, py, pz); wuv.push(u, v); wc.push(col.r, col.g, col.b); };
       if (hasStore) {   // storefront band: own texture bucket, v=1 lands exactly at bandTop
+        const SN = STOREFRONT.n || 1, os = (hash + i) % SN;   // start each edge at a different shopfront
         const su1 = Math.max(1, Math.round(elen / STOREFRONT.cw));
         const pushS = (px, py, pz, u, v) => { storePos.push(px, py, pz); storeUV.push(u, v); storeCol.push(col.r, col.g, col.b); };
         const v0 = (yBot - (bandTop - BAND)) / BAND;         // below-grade lip repeats out of sight
-        pushS(a.x, yBot, a.z, 0, v0); pushS(bb.x, yBot, bb.z, su1, v0); pushS(bb.x, bandTop, bb.z, su1, 1);
-        pushS(a.x, yBot, a.z, 0, v0); pushS(bb.x, bandTop, bb.z, su1, 1); pushS(a.x, bandTop, a.z, 0, 1);
+        pushS(a.x, yBot, a.z, os/SN, v0); pushS(bb.x, yBot, bb.z, (os+su1)/SN, v0); pushS(bb.x, bandTop, bb.z, (os+su1)/SN, 1);
+        pushS(a.x, yBot, a.z, os/SN, v0); pushS(bb.x, bandTop, bb.z, (os+su1)/SN, 1); pushS(a.x, bandTop, a.z, os/SN, 1);
       }
       // whole number of window columns per edge & floors up -> no clipped/partial windows,
-      // rows line up across faces and the top edge lands on a full floor
+      // rows line up across faces and the top edge lands on a full floor. UVs land on atlas
+      // cell boundaries (u,v are cellIndex/FNC); ou varies per edge, ov per building.
+      const ou = (hash + i * 3) % FNC;
       const u1 = Math.max(1, Math.round(elen / CELL_W)), v1 = Math.max(1, Math.round((eaveY - bandTop) / CELL_H));
-      push(a.x, bandTop, a.z, 0, 0);   push(bb.x, bandTop, bb.z, u1, 0);  push(bb.x, eaveY, bb.z, u1, v1);
-      push(a.x, bandTop, a.z, 0, 0);   push(bb.x, eaveY, bb.z, u1, v1); push(a.x, eaveY, a.z, 0, v1);
+      push(a.x, bandTop, a.z, ou/FNC, ov/FNC);   push(bb.x, bandTop, bb.z, (ou+u1)/FNC, ov/FNC);  push(bb.x, eaveY, bb.z, (ou+u1)/FNC, (ov+v1)/FNC);
+      push(a.x, bandTop, a.z, ou/FNC, ov/FNC);   push(bb.x, eaveY, bb.z, (ou+u1)/FNC, (ov+v1)/FNC); push(a.x, eaveY, a.z, ou/FNC, (ov+v1)/FNC);
     }
     if (wp.length) {
       const g = new THREE.BufferGeometry();

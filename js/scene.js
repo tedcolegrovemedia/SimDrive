@@ -54,55 +54,131 @@ scene.add(worldGroup);
 
 // Shared window-facade texture (tiles across building walls via UVs).
 const ANISO = Math.min(4, renderer.capabilities.getMaxAnisotropy());
-function canvasTex(size, draw) {
-  const cv = document.createElement('canvas'); cv.width = cv.height = size;
+function canvasTex(size, draw, height) {
+  const cv = document.createElement('canvas'); cv.width = size; cv.height = height || size;
   draw(cv.getContext('2d'));
   const t = new THREE.CanvasTexture(cv);
   t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = ANISO; t.colorSpace = THREE.SRGBColorSpace;
   return t;
 }
-// Several facade styles so buildings aren't all skinned the same. Walls are near-white so the
-// per-building palette colour tints them; windows stay dark. cw/ch = metres per tile (UV scale).
+// Facade atlases: each style is a 4x4 grid of 64px window cells with per-cell character
+// (lit rooms, blinds, curtains, AC units, pane-tint jitter) so the tiling repeats every
+// FOUR windows instead of every one — that per-window sameness was what read as "generic".
+// Walls stay near-white so the per-building palette colour tints them; windows stay dark.
+// cw/ch = metres per CELL (one window); n = cells per texture side (UVs divide by n).
+const FN = 4;
+function _wallBase(g, tone) {          // wall colour + masonry speckle + faint weather streaks
+  g.fillStyle = tone; g.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < 900; i++) { const v = 200 + (Math.random()*40|0);
+    g.fillStyle = `rgba(${v},${v-3},${v-10},0.15)`; g.fillRect(Math.random()*256|0, Math.random()*256|0, 2, 2); }
+  for (let i = 0; i < 9; i++) { const x = Math.random()*256|0;
+    g.fillStyle = `rgba(70,65,58,${0.03 + Math.random()*0.05})`; g.fillRect(x, 0, 2 + Math.random()*5, 256); }
+}
+// One glass pane with its own character; the frame/mullions are drawn OVER it by the caller.
+function _pane(g, x, y, w, h, opts = {}) {
+  const r = Math.random(), base = 52 + (Math.random()*16|0);       // slate tint jitter
+  g.fillStyle = `rgb(${base-12},${base-4},${base+8})`; g.fillRect(x, y, w, h);
+  g.fillStyle = 'rgba(165,180,195,0.25)'; g.fillRect(x, y, w, Math.max(2, h*0.18|0)); // sky reflection
+  if (r < 0.08) {                                                  // lit interior (dim, warm)
+    g.fillStyle = '#caa267'; g.fillRect(x, y, w, h);
+    g.fillStyle = 'rgba(120,85,45,0.45)'; g.fillRect(x, y + (h*0.55|0), w, h - (h*0.55|0));
+  } else if (r < 0.26) {                                           // blinds partway down
+    const bh = (h * (0.25 + Math.random()*0.5)) | 0;
+    g.fillStyle = '#cfc9bb'; g.fillRect(x, y, w, bh);
+    g.fillStyle = 'rgba(0,0,0,0.12)';
+    for (let yy = y + 3; yy < y + bh; yy += 3) g.fillRect(x, yy, w, 1);
+  } else if (r < 0.34 && opts.curtains) {                          // curtains at the edges
+    const cw2 = Math.max(3, w*0.22|0);
+    g.fillStyle = '#ded8cb'; g.fillRect(x, y, cw2, h); g.fillRect(x + w - cw2, y, cw2, h);
+  }
+}
+function _cells(g, cell) { for (let cy = 0; cy < FN; cy++) for (let cx = 0; cx < FN; cx++) cell(g, cx*64, cy*64); }
 const FACADES = [
-  { cw: 3.4, ch: 3.6, tex: canvasTex(64, g => {                 // 0 office: regular glass grid
-      g.fillStyle='#ece9e3'; g.fillRect(0,0,64,64);
-      g.fillStyle='#36414e'; g.fillRect(9,8,46,48);
-      g.fillStyle='#d8d4cc'; g.fillRect(9,8,46,3); g.fillRect(9,53,46,3); g.fillRect(9,8,3,48); g.fillRect(52,8,3,48); g.fillRect(30,8,4,48); g.fillRect(9,30,46,4); }) },
-  { cw: 2.8, ch: 3.2, tex: canvasTex(64, g => {                 // 1 residential: small punched window + sill
-      g.fillStyle='#ece9e3'; g.fillRect(0,0,64,64);
-      g.fillStyle='#3b4654'; g.fillRect(18,12,28,32);
-      g.fillStyle='#cfcabf'; g.fillRect(15,44,34,4);
-      g.fillStyle='#ddd9d0'; g.fillRect(18,12,28,3); g.fillRect(31,12,2,32); g.fillRect(18,27,28,2); }) },
-  { cw: 4.6, ch: 3.6, tex: canvasTex(64, g => {                 // 2 commercial: wide ribbon windows
-      g.fillStyle='#ece9e3'; g.fillRect(0,0,64,64);
-      g.fillStyle='#374250'; g.fillRect(6,16,52,30);
-      g.fillStyle='#d4d0c7'; g.fillRect(6,16,52,3); g.fillRect(6,43,52,3); g.fillRect(6,30,52,2);
-      for(let x=6;x<=58;x+=13) g.fillRect(x,16,2,30); }) },
-  { cw: 4.2, ch: 4.4, tex: canvasTex(64, g => {                 // 3 industrial: small high panes, lots of wall
-      g.fillStyle='#e7e4dd'; g.fillRect(0,0,64,64);
-      g.fillStyle='#3a4450'; for(let x=8;x<56;x+=12) g.fillRect(x,10,8,12);
-      g.fillStyle='#cdc8be'; g.fillRect(0,30,64,2); }) },
-  { cw: 3.0, ch: 3.2, tex: canvasTex(64, g => {                 // 4 glass curtain wall: dark panes + thin grid
-      g.fillStyle='#2c3742'; g.fillRect(0,0,64,64);
-      g.fillStyle='#7e8a96'; for(let x=0;x<64;x+=16) g.fillRect(x,0,2,64); for(let y=0;y<64;y+=16) g.fillRect(0,y,64,2); }) },
-  { cw: 3.2, ch: 3.4, tex: canvasTex(64, g => {                 // 5 brick/older: brick courses + small windows
-      g.fillStyle='#e9e3d8'; g.fillRect(0,0,64,64);
-      g.strokeStyle='rgba(120,95,80,0.22)'; g.lineWidth=1; for(let y=4;y<64;y+=6){ g.beginPath(); g.moveTo(0,y); g.lineTo(64,y); g.stroke(); }
-      g.fillStyle='#3c4652'; g.fillRect(12,14,16,24); g.fillRect(38,14,16,24);
-      g.fillStyle='#d6d1c7'; g.fillRect(12,14,16,3); g.fillRect(38,14,16,3); }) },
+  { cw: 3.4, ch: 3.6, n: FN, tex: canvasTex(256, g => {           // 0 office: regular glass grid
+      _wallBase(g, '#ece9e3');
+      _cells(g, (g, ox, oy) => {
+        _pane(g, ox+9, oy+8, 46, 48);
+        g.fillStyle='#d8d4cc'; g.fillRect(ox+9,oy+8,46,3); g.fillRect(ox+9,oy+53,46,3); g.fillRect(ox+9,oy+8,3,48); g.fillRect(ox+52,oy+8,3,48); g.fillRect(ox+30,oy+8,4,48); g.fillRect(ox+9,oy+30,46,4);
+      }); }) },
+  { cw: 2.8, ch: 3.2, n: FN, tex: canvasTex(256, g => {           // 1 residential: punched window + sill
+      _wallBase(g, '#ece9e3');
+      _cells(g, (g, ox, oy) => {
+        _pane(g, ox+18, oy+12, 28, 32, { curtains: true });
+        g.fillStyle='#ddd9d0'; g.fillRect(ox+18,oy+12,28,3); g.fillRect(ox+31,oy+12,2,32); g.fillRect(ox+18,oy+27,28,2);
+        g.fillStyle='#cfcabf'; g.fillRect(ox+15,oy+44,34,4);
+        if (Math.random() < 0.16) {                                // window AC unit below the sill
+          g.fillStyle='#b4b2aa'; g.fillRect(ox+25,oy+40,14,9);
+          g.fillStyle='#8e8c85'; g.fillRect(ox+25,oy+40,14,2);
+        }
+      }); }) },
+  { cw: 4.6, ch: 3.6, n: FN, tex: canvasTex(256, g => {           // 2 commercial: wide ribbon windows
+      _wallBase(g, '#ece9e3');
+      _cells(g, (g, ox, oy) => {
+        for (let x = 6; x < 58; x += 13) _pane(g, ox+x, oy+16, Math.min(13, 58-x), 30);
+        g.fillStyle='#d4d0c7'; g.fillRect(ox+6,oy+16,52,3); g.fillRect(ox+6,oy+43,52,3); g.fillRect(ox+6,oy+30,52,2);
+        for (let x = 6; x <= 58; x += 13) g.fillRect(ox+x,oy+16,2,30);
+      }); }) },
+  { cw: 4.2, ch: 4.4, n: FN, tex: canvasTex(256, g => {           // 3 industrial: small high panes, lots of wall
+      _wallBase(g, '#e7e4dd');
+      g.fillStyle='rgba(150,100,60,0.05)';                         // faint rust wash
+      for (let i = 0; i < 6; i++) g.fillRect(Math.random()*256|0, 0, 4 + Math.random()*8, 256);
+      _cells(g, (g, ox, oy) => {
+        for (let x = 8; x < 56; x += 12) {
+          const v = 46 + (Math.random()*18|0);
+          g.fillStyle = `rgb(${v-8},${v},${v+8})`; g.fillRect(ox+x, oy+10, 8, 12);
+          g.fillStyle = 'rgba(170,185,195,0.3)'; g.fillRect(ox+x, oy+10, 8, 3);
+        }
+        g.fillStyle='#cdc8be'; g.fillRect(ox,oy+30,64,2);
+      }); }) },
+  { cw: 3.0, ch: 3.2, n: FN, tex: canvasTex(256, g => {           // 4 glass curtain wall
+      g.fillStyle='#2c3742'; g.fillRect(0,0,256,256);
+      _cells(g, (g, ox, oy) => {
+        for (let px = 0; px < 64; px += 16) for (let py = 0; py < 64; py += 16) {
+          const r = Math.random(), v = 40 + (Math.random()*22|0);
+          g.fillStyle = r < 0.04 ? '#c7a065' : `rgb(${v-8},${v},${v+12})`;  // rare lit pane
+          g.fillRect(ox+px, oy+py, 16, 16);
+          g.fillStyle = 'rgba(150,170,190,0.18)'; g.fillRect(ox+px, oy+py, 16, 5); // sky at pane top
+        }
+        g.fillStyle='#7e8a96';
+        for (let x = 0; x < 64; x += 16) g.fillRect(ox+x, oy, 2, 64);
+        for (let y = 0; y < 64; y += 16) g.fillRect(ox, oy+y, 64, 2);
+      }); }) },
+  { cw: 3.2, ch: 3.4, n: FN, tex: canvasTex(256, g => {           // 5 brick/older: courses + small windows
+      _wallBase(g, '#e9e3d8');
+      g.strokeStyle='rgba(120,95,80,0.22)'; g.lineWidth=1;
+      for (let y = 4; y < 256; y += 6) { g.beginPath(); g.moveTo(0,y); g.lineTo(256,y); g.stroke(); }
+      for (let i = 0; i < 40; i++) {                               // odd discoloured bricks
+        g.fillStyle = `rgba(${150+(Math.random()*40|0)},110,85,0.10)`;
+        g.fillRect(Math.random()*256|0, (Math.random()*42|0)*6+5, 5+Math.random()*6, 5);
+      }
+      _cells(g, (g, ox, oy) => {
+        _pane(g, ox+12, oy+14, 16, 24, { curtains: true }); _pane(g, ox+38, oy+14, 16, 24, { curtains: true });
+        g.fillStyle='#d6d1c7'; g.fillRect(ox+12,oy+14,16,3); g.fillRect(ox+38,oy+14,16,3);
+        g.fillStyle='#cfcabf'; g.fillRect(ox+11,oy+38,18,3); g.fillRect(ox+37,oy+38,18,3);   // sills
+      }); }) },
 ];
-// Ground-floor storefront band (tiles horizontally only): big glass, a doorway, and a
-// sign/awning strip on top. Near-white surround so the building's palette colour tints it.
-const STOREFRONT = { cw: 3.8, tex: canvasTex(64, g => {
-  g.fillStyle='#ded9cf'; g.fillRect(0,0,64,64);                    // masonry surround
-  g.fillStyle='#8b5a43'; g.fillRect(0,4,64,11);                    // awning / sign band
-  g.fillStyle='#f0ece4'; g.fillRect(0,15,64,2);
-  g.fillStyle='#232a33'; g.fillRect(5,20,34,44);                   // display glass (to the ground)
-  g.fillStyle='#aab4bd'; g.fillRect(5,20,34,2);                    // glass top reflection
-  g.fillStyle='#5b636e'; g.fillRect(21,20,2,44);                   // mullion
-  g.fillStyle='#463229'; g.fillRect(45,24,14,40);                  // recessed door
-  g.fillStyle='#2c333c'; g.fillRect(48,30,8,26);                   // door glass
-}) };
+// Ground-floor storefront band (tiles horizontally only): 4 shopfront variants side by side —
+// different awning colours (some striped), door left or right, a hint of merchandise — so a
+// commercial block reads as a row of different shops, not one repeated storefront.
+const AWNING_COLS = ['#8b5a43', '#7a4a4a', '#3f6b52', '#4a5a7a', '#8a4a3a', '#6b5a3f'];
+const STOREFRONT = { cw: 3.8, n: FN, tex: canvasTex(256, g => {
+  for (let cx = 0; cx < FN; cx++) {
+    const ox = cx * 64, flip = Math.random() < 0.5;
+    g.fillStyle='#ded9cf'; g.fillRect(ox,0,64,64);                 // masonry surround
+    const ac = AWNING_COLS[(Math.random()*AWNING_COLS.length)|0];
+    g.fillStyle=ac; g.fillRect(ox,4,64,11);                        // awning / sign band
+    if (Math.random() < 0.4) { g.fillStyle='rgba(255,255,255,0.35)'; for (let x = 0; x < 64; x += 12) g.fillRect(ox+x,4,6,11); }
+    g.fillStyle='#f0ece4'; g.fillRect(ox,15,64,2);
+    const gx = flip ? ox+25 : ox+5, dx = flip ? ox+5 : ox+45;      // glass + door swap sides
+    g.fillStyle='#232a33'; g.fillRect(gx,20,34,44);                // display glass (to the ground)
+    g.fillStyle='#aab4bd'; g.fillRect(gx,20,34,2);                 // glass top reflection
+    g.fillStyle='rgba(190,175,140,0.35)';                          // merchandise silhouettes
+    g.fillRect(gx+4,44,8,20); g.fillRect(gx+16,50,9,14);
+    g.fillStyle='#5b636e'; g.fillRect(gx+16,20,2,44);              // mullion
+    g.fillStyle='#463229'; g.fillRect(dx,24,14,40);                // recessed door
+    g.fillStyle='#2c333c'; g.fillRect(dx+3,30,8,26);               // door glass
+  }
+}, 64) };
 // Concrete sidewalk: light slab tone with panel-joint grooves. UVs run u=along-walk, v=across-walk,
 // so a groove drawn along the texture's V axis (constant U) becomes a CROSS joint across the walk.
 // We draw ONLY that (no U-axis line) → cross joints every panel, with NO continuous lengthwise line.
