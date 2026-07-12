@@ -345,12 +345,7 @@ function buildWorld(data, lat0, lon0, radiusMi, heightAt, overture, playMi) {
     let t = l2 ? ((px-ax)*dx + (pz-az)*dz) / l2 : 0; t = t < 0 ? 0 : t > 1 ? 1 : t;
     return Math.hypot(px - (ax+dx*t), pz - (az+dz*t));
   };
-  // ---- deck pre-pass: compute EVERY bridge deck's profile before any structure is built.
-  // A bridge rail must open exactly where another pavement continues at deck level past
-  // the edge (ramp merges, fork gores, parallel carriageways). The old approach — a radius
-  // around junction nodes — opened far too much (whole interchange edges went railless)
-  // and too little (long gores kept walls across ramps). With all decks known up front,
-  // each rail segment can simply ask "is there other road surface at my height here?".
+  // ---- deck pre-pass: compute every bridge deck's profile before emitting geometry ----
   const deckList = [];
   for (const r of roadPolys) {
     if (!r.bridge || r.pts.length < 2) continue;
@@ -377,28 +372,6 @@ function buildWorld(data, lat0, lon0, radiusMi, heightAt, overture, playMi) {
                     eStart, eEnd, plateau, waterY, deckFn, bb: { x0, x1, z0, z1 } };
     deckList.push(entry); r._deck = entry;
   }
-  // Highest OTHER deck surface covering (x,z), else -Infinity.
-  const otherDeckAt = (x, z, exclude) => {
-    let best = -Infinity;
-    for (const d of deckList) {
-      if (d === exclude) continue;
-      const reach = d.hw + 1.9;
-      if (x < d.bb.x0-reach || x > d.bb.x1+reach || z < d.bb.z0-reach || z > d.bb.z1+reach) continue;
-      for (let i = 0; i < d.pts.length - 1; i++) {
-        const a = d.pts[i], b = d.pts[i+1];
-        const dx = b.x-a.x, dz = b.z-a.z, l2 = dx*dx + dz*dz;
-        let t = l2 ? ((x-a.x)*dx + (z-a.z)*dz) / l2 : 0; t = t < 0 ? 0 : t > 1 ? 1 : t;
-        const px = a.x+dx*t, pz = a.z+dz*t;
-        if (Math.hypot(x-px, z-pz) < reach) {
-          const frac = (d.cum[i] + Math.sqrt(l2)*t) / d.total;
-          best = Math.max(best, d.deckFn(px, pz, frac));
-          break;
-        }
-      }
-    }
-    return best;
-  };
-
   // Street level at a point: road-surface height of the nearest NON-BRIDGE road whose
   // pavement covers (x,z), else -Infinity. "Is on a street" = result > -Infinity; bridge
   // rails also compare the deck height against it to stay open at at-grade crossings.
@@ -430,7 +403,7 @@ function buildWorld(data, lat0, lon0, radiusMi, heightAt, overture, playMi) {
       if (dk && dk.raised) {
         ribbon(pts, hw, roadPos, dk.deckFn);
         if (r.w >= 7) emitDashes(pts, (x, z, f) => dk.deckFn(x, z, f) + 0.06);  // decks get centre lines too
-        bridgeStructure(pts, hw, dk.deckFn, bridgePos, streetLevelAt, (x, z) => otherDeckAt(x, z, dk));
+        bridgeStructure(pts, hw, dk.deckFn, bridgePos, streetLevelAt);
         bridges.push({ pts: dk.dd, hw, eStart: dk.eStart, eEnd: dk.eEnd, plateau: dk.plateau, waterY: dk.waterY });
       } else {
         ribbon(pts, hw, roadPos, roadY);
@@ -955,32 +928,9 @@ function buildWorld(data, lat0, lon0, radiusMi, heightAt, overture, playMi) {
     }
   }
 
-  // ---- highway barriers: wall the edges of big divided highways so you must use exits ----
-  // Each edge segment gets a jersey barrier UNLESS a connecting road (ramp / cross-street)
-  // reaches the edge there — those openings are the on/off ramps. We detect a connection by
-  // sampling roadMask just BEYOND the highway's own shoulder: pavement there = a real exit.
-  const BARRIER_MIN_W = 11;                   // motorway(13) + trunk(12); arterials stay open
-  const BARRIER_H = 0.85, barrierPos = [];
-  for (const r of roadPolys) {
-    if (r.bridge || r.w < BARRIER_MIN_W) continue;   // bridges get rails instead
-    const hw = r.w / 2, dd = densify(r.pts, 4);
-    if (dd.length < 2) continue;
-    const { Lx, Lz, Rx, Rz } = offsets(dd, hw + 0.5);   // barrier line just outside the paint
-    for (const [Ex, Ez] of [[Lx, Lz], [Rx, Rz]]) {
-      for (let i = 0; i < dd.length - 1; i++) {
-        const mx = (Ex[i] + Ex[i+1]) / 2, mz = (Ez[i] + Ez[i+1]) / 2;     // edge-segment midpoint
-        let ox = mx - (dd[i].x + dd[i+1].x) / 2, oz = mz - (dd[i].z + dd[i+1].z) / 2; // outward from centerline
-        const ol = Math.hypot(ox, oz) || 1; ox /= ol; oz /= ol;
-        if (onRoad(mx + ox*3.0, mz + oz*3.0)) continue;  // a road leads out here -> leave the gap (exit)
-        const ay = terrain(Ex[i], Ez[i]) + 0.1, by = terrain(Ex[i+1], Ez[i+1]) + 0.1;
-        barrierPos.push(
-          Ex[i],ay,Ez[i], Ex[i+1],by,Ez[i+1], Ex[i+1],by+BARRIER_H,Ez[i+1],
-          Ex[i],ay,Ez[i], Ex[i+1],by+BARRIER_H,Ez[i+1], Ex[i],ay+BARRIER_H,Ez[i]);
-        addWallSeg(Ex[i],Ez[i], Ex[i+1],Ez[i+1], Math.min(ay,by), BARRIER_H + 1.5);
-      }
-    }
-  }
-  if (barrierPos.length) { const m = flatMesh(barrierPos, 0xb8b4a8, true); m.material.side = THREE.DoubleSide; worldGroup.add(m); }
+  // (No highway barriers or bridge guard rails: every heuristic for placing edge walls —
+  // terrain drop, merge radii, deck overlap, exit-gap sampling — produced worse artifacts
+  // than the open edges they prevented. Deck slab thickness alone marks bridge edges.)
 
   // ---- spawn: resume the saved position on a refresh, else nearest road node to center ----
   if (restorePos && isFinite(restorePos.x) && Math.abs(restorePos.x) < gsz/2 && Math.abs(restorePos.z) < gsz/2) {

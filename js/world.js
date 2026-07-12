@@ -764,17 +764,16 @@ function ribbon(rawPts, hw, out, yFn) {
   }
 }
 
-// Bridge structure: parapets, slab underside, and support pillars to the ground.
+// Bridge structure: slab underside/sides and support pillars to the ground.
 // streetLevel(x,z) (optional) returns the surface height of a non-bridge road covering that
-// point (else -Infinity) — used to keep supports off cross-streets and to OPEN the rails
-// where a street crosses the deck at its own level. otherDeck(x,z) (optional) returns the
-// height of any OTHER bridge deck covering the point (else -Infinity) — the rail opens where
-// that deck runs at this deck's level (ramp merges, fork gores, parallel carriageways),
-// because the pavement genuinely continues past the edge there.
-function bridgeStructure(rawPts, hw, deckFn, out, streetLevel, otherDeck) {
+// point (else -Infinity) — used to keep supports off cross-streets.
+// NO guard rails/parapets: every heuristic for where to place them (terrain drop, merge
+// radii, deck overlap) produced worse artifacts than the open edges they prevented —
+// floating fins on hillsides, railless-then-walled ramps, sealed merges. The deck's
+// visible slab thickness alone marks the edge.
+function bridgeStructure(rawPts, hw, deckFn, out, streetLevel) {
   const pts = densify(rawPts, 3);                          // match the deck so the fascia follows it smoothly
   const n = pts.length; if (n < 2) return;
-  const RAIL_H = 0.95;
   const { Lx, Lz, Rx, Rz } = offsets(pts, hw + 0.35);
   const deck = [], und = [];
   for (let i = 0; i < n; i++) { const d = deckFn(pts[i].x, pts[i].z, i/(n-1)); deck.push(d); und.push(d - 0.6); }
@@ -783,39 +782,9 @@ function bridgeStructure(rawPts, hw, deckFn, out, streetLevel, otherDeck) {
   for (let i = 0; i < n-1; i++) {
     // underside slab
     quad(Lx[i],und[i],Lz[i], Rx[i],und[i],Rz[i], Rx[i+1],und[i+1],Rz[i+1], Lx[i+1],und[i+1],Lz[i+1]);
-    // solid slab sides: underside up to the DECK level only (no thin railing wall above,
-    // which read as stray blades) -> a clean solid deck with visible thickness
+    // solid slab sides: underside up to the DECK level -> a clean deck with visible thickness
     quad(Lx[i],und[i],Lz[i], Lx[i+1],und[i+1],Lz[i+1], Lx[i+1],deck[i+1],Lz[i+1], Lx[i],deck[i],Lz[i]);
     quad(Rx[i],und[i],Rz[i], Rx[i+1],und[i+1],Rz[i+1], Rx[i+1],deck[i+1],Rz[i+1], Rx[i],deck[i],Rz[i]);
-    // parapet RAILS along both edges (visible wall) + crash-wall segments so the car can't
-    // drive off the side and fall — but ONLY where the deck is meaningfully ABOVE the ground.
-    // At ramp ends the deck sits at street level; a crash wall there sealed the bridge shut.
-    // And where a street CROSSES the deck at (roughly) its own level — low ramps over dipped
-    // terrain, e.g. River St under Hill-to-Hill — the terrain-drop test alone kept a wall
-    // across the street. Each SIDE is judged at its own rail line: no drop or an at-grade
-    // street there -> no rail/wall on that side. Genuine underpasses (street 2.4+ below the
-    // deck) keep their walls.
-    // If the deck is grounded/buried at the CENTRELINE (ramps cutting across a hillside),
-    // there is no visible bridge here — rails on the downhill side would poke out of the
-    // grass as floating fins. No rails on either side.
-    const grounded = deck[i] - terrain(pts[i].x, pts[i].z) <= 0.9;
-    const railMode = (x1, z1, x2, z2) => {          // 0 none | 1 visible rail | 2 rail + crash wall
-      if (grounded) return 0;
-      const mx = (x1 + x2) / 2, mz = (z1 + z2) / 2;
-      const drop = deck[i] - terrain(mx, mz);
-      if (drop <= 0.9) return 0;
-      const oy = otherDeck ? otherDeck(mx, mz) : -Infinity;
-      if (oy > -Infinity && Math.abs(deck[i] - oy) < 2.0) return 0;  // another deck continues at this level
-      const sy = streetLevel ? streetLevel(mx, mz) : -Infinity;
-      if (sy > -Infinity && deck[i] < sy + 2.4) return 0;
-      return drop > 1.6 ? 2 : 1;
-    };
-    const mL = railMode(Lx[i], Lz[i], Lx[i+1], Lz[i+1]);
-    const mR = railMode(Rx[i], Rz[i], Rx[i+1], Rz[i+1]);
-    if (mL) quad(Lx[i],deck[i],Lz[i], Lx[i+1],deck[i+1],Lz[i+1], Lx[i+1],deck[i+1]+RAIL_H,Lz[i+1], Lx[i],deck[i]+RAIL_H,Lz[i]);
-    if (mR) quad(Rx[i],deck[i],Rz[i], Rx[i+1],deck[i+1],Rz[i+1], Rx[i+1],deck[i+1]+RAIL_H,Rz[i+1], Rx[i],deck[i]+RAIL_H,Rz[i]);
-    if (mL === 2) addWallSeg(Lx[i],Lz[i], Lx[i+1],Lz[i+1], deck[i], RAIL_H + 1.5);
-    if (mR === 2) addWallSeg(Rx[i],Rz[i], Rx[i+1],Rz[i+1], deck[i], RAIL_H + 1.5);
   }
   // support pillars every ~36 m, where the deck is well above the ground
   for (let i = 6; i < n-6; i += 6) {
