@@ -11,6 +11,7 @@ addEventListener('keydown', e => {
   const k = e.key.toLowerCase(); keys[k] = true;
   if (k === 'h') horn(); if (k === 'c') chaseCam = !chaseCam;
   if (k === 'r') cycleRadio();
+  if (k === 'n') spotifyNext();
   if ([' ','arrowup','arrowdown','arrowleft','arrowright'].includes(k)) e.preventDefault();
 });
 addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
@@ -35,6 +36,8 @@ bindTouchBtn('tGas', 'w');  bindTouchBtn('tBrake', 's');
 document.getElementById('camView').addEventListener('click', () => { chaseCam = !chaseCam; });
 // Radio button mirrors the R key (the only way to change stations on a phone)
 document.getElementById('radioBtn').addEventListener('click', () => cycleRadio());
+// Next button mirrors the N key; spotify.js shows it only on the Spotify station
+document.getElementById('nextBtn').addEventListener('click', () => spotifyNext());
 
 // Build stamp in the Controls popover: newest Last-Modified among the loaded app files
 // (set by bootstrap.js). Lets anyone confirm which deploy their device is actually running.

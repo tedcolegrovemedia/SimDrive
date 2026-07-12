@@ -234,15 +234,28 @@ async function spRemoteStart() {
   spPollStart();
 }
 
-function spPollStart() {                                 // mirror the remote device's track
+async function spPollOnce() {                            // mirror the remote device's track
+  if (!sp.tuned) return;
+  try {
+    const st = await spApi('GET', '/me/player');
+    if (st && st.is_playing) spShowTrack(st.item);
+  } catch (e) {}
+}
+function spPollStart() {
   clearInterval(sp.poll);
-  sp.poll = setInterval(async () => {
-    if (!sp.tuned || document.hidden) return;
-    try {
-      const st = await spApi('GET', '/me/player');
-      if (st && st.is_playing) spShowTrack(st.item);
-    } catch (e) {}
-  }, 5000);
+  sp.poll = setInterval(() => { if (!document.hidden) spPollOnce(); }, 5000);
+}
+
+// Next-track: N key / the ⏭ top-bar button (visible only on the Spotify station).
+function spNextBtnShow(show) {
+  const b = document.getElementById('nextBtn'); if (b) b.style.display = show ? '' : 'none';
+}
+async function spotifyNext() {
+  if (!sp.tuned) return;
+  try {
+    if (SP_REMOTE) { await spApi('POST', '/me/player/next'); setTimeout(spPollOnce, 800); }
+    else if (sp.player) await sp.player.nextTrack();     // SDK fires player_state_changed itself
+  } catch (e) { spToast('skip failed'); }
 }
 
 //----------------------------------------------------------------------------
@@ -250,7 +263,7 @@ function spPollStart() {                                 // mirror the remote de
 //----------------------------------------------------------------------------
 async function spotifyTune() {
   sp.tuned = true; sp.lastTrack = null;
-  spLcd('SPOTIFY');
+  spLcd('SPOTIFY'); spNextBtnShow(true);
   try {
     if (!(await spToken())) {
       spToast('connect in the popup…');
@@ -271,6 +284,7 @@ async function spotifyTune() {
 function spotifyDetune() {
   if (!sp.tuned) return;
   sp.tuned = false;
+  spNextBtnShow(false);
   clearInterval(sp.poll); sp.poll = null;
   if (SP_REMOTE) { spApi('PUT', '/me/player/pause').catch(() => {}); return; }
   if (sp.player) sp.player.pause().catch(() => {});
