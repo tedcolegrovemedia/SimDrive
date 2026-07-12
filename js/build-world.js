@@ -345,33 +345,58 @@ function buildWorld(data, lat0, lon0, radiusMi, heightAt, overture, playMi) {
     let t = l2 ? ((px-ax)*dx + (pz-az)*dz) / l2 : 0; t = t < 0 ? 0 : t > 1 ? 1 : t;
     return Math.hypot(px - (ax+dx*t), pz - (az+dz*t));
   };
-  // Merge/fork gores: junction nodes where 3+ drivable ways meet, or 2 ways of different
-  // widths join (a ramp meeting a mainline). Bridge rails must OPEN near these — at an
-  // elevated on-ramp merge (Main St onto the PA-378 viaduct) the mainline's edge rail
-  // otherwise runs straight across the ramp's path as a crash wall, sealing the merge.
-  // Plain span-to-span joints (2 same-width ways) keep their rails.
-  const jkey = (x, z) => Math.round(x) + '_' + Math.round(z);
-  const jmap = new Map();
+  // ---- deck pre-pass: compute EVERY bridge deck's profile before any structure is built.
+  // A bridge rail must open exactly where another pavement continues at deck level past
+  // the edge (ramp merges, fork gores, parallel carriageways). The old approach — a radius
+  // around junction nodes — opened far too much (whole interchange edges went railless)
+  // and too little (long gores kept walls across ramps). With all decks known up front,
+  // each rail segment can simply ask "is there other road surface at my height here?".
+  const deckList = [];
   for (const r of roadPolys) {
-    if (r.pts.length < 2) continue;
-    for (const e of [r.pts[0], r.pts[r.pts.length - 1]]) {
-      const k = jkey(e.x, e.z);
-      let j = jmap.get(k); if (!j) { j = { x: e.x, z: e.z, n: 0, widths: new Set() }; jmap.set(k, j); }
-      j.n++; j.widths.add(r.w);
+    if (!r.bridge || r.pts.length < 2) continue;
+    const dd = densify(r.pts, 3);
+    let lowest = Infinity, spanLen = 0;
+    for (let i = 0; i < dd.length; i++) {
+      lowest = Math.min(lowest, terrain(dd[i].x, dd[i].z));
+      if (i > 0) spanLen += Math.hypot(dd[i].x - dd[i-1].x, dd[i].z - dd[i-1].z);
     }
+    let waterY = -Infinity; for (const pt of dd) { const wy = waterYAt(pt.x, pt.z); if (wy > waterY) waterY = wy; }
+    if (!(spanLen >= 11 || waterY > -Infinity)) { r._deck = { raised: false }; continue; }
+    const a = r.pts[0], b = r.pts[r.pts.length-1];
+    const clearance = Math.min(6, Math.max(spanLen >= 11 ? 3 : 1.5, spanLen * 0.06));
+    const plateau = plateauFor(a.x, a.z) ?? (Math.max(waterY, lowest) + clearance);
+    const eStart = isJoint(a.x, a.z) ? plateau : roadY(a.x, a.z) - 0.2;
+    const eEnd   = isJoint(b.x, b.z) ? plateau : roadY(b.x, b.z) - 0.2;
+    const deckFn = (x, z, frac) => { const base = eStart + (eEnd - eStart) * frac; return base + Math.max(0, plateau - base) * bridgeBump(frac) + 0.2; };
+    // cumulative arc length along the way -> frac for deckFn at any centreline point
+    const cum = [0]; let total = 0;
+    for (let i = 0; i < r.pts.length - 1; i++) { total += Math.hypot(r.pts[i+1].x-r.pts[i].x, r.pts[i+1].z-r.pts[i].z); cum.push(total); }
+    let x0=1e9,x1=-1e9,z0=1e9,z1=-1e9;
+    for (const p of r.pts) { if(p.x<x0)x0=p.x; if(p.x>x1)x1=p.x; if(p.z<z0)z0=p.z; if(p.z>z1)z1=p.z; }
+    const entry = { raised: true, pts: r.pts, hw: r.w/2, dd, cum, total: total || 1,
+                    eStart, eEnd, plateau, waterY, deckFn, bb: { x0, x1, z0, z1 } };
+    deckList.push(entry); r._deck = entry;
   }
-  // n>=3 is a true fork/merge. A 2-way joint only counts when the widths differ enough to
-  // be a ramp joining a mainline (>=1.4x) — mere classification changes along one road
-  // (residential->tertiary etc.) were blanketing whole interchanges in "merge" circles,
-  // stripping the rails off entire elevated decks.
-  const mergeNodes = [...jmap.values()].filter(j => {
-    if (j.n >= 3) return true;
-    if (j.widths.size >= 2) { const ws = [...j.widths]; return Math.max(...ws) / Math.min(...ws) >= 1.4; }
-    return false;
-  });
-  const nearMerge = (x, z) => {
-    for (const j of mergeNodes) { const dx = x - j.x, dz = z - j.z; if (dx*dx + dz*dz < 15*15) return true; }
-    return false;
+  // Highest OTHER deck surface covering (x,z), else -Infinity.
+  const otherDeckAt = (x, z, exclude) => {
+    let best = -Infinity;
+    for (const d of deckList) {
+      if (d === exclude) continue;
+      const reach = d.hw + 1.9;
+      if (x < d.bb.x0-reach || x > d.bb.x1+reach || z < d.bb.z0-reach || z > d.bb.z1+reach) continue;
+      for (let i = 0; i < d.pts.length - 1; i++) {
+        const a = d.pts[i], b = d.pts[i+1];
+        const dx = b.x-a.x, dz = b.z-a.z, l2 = dx*dx + dz*dz;
+        let t = l2 ? ((x-a.x)*dx + (z-a.z)*dz) / l2 : 0; t = t < 0 ? 0 : t > 1 ? 1 : t;
+        const px = a.x+dx*t, pz = a.z+dz*t;
+        if (Math.hypot(x-px, z-pz) < reach) {
+          const frac = (d.cum[i] + Math.sqrt(l2)*t) / d.total;
+          best = Math.max(best, d.deckFn(px, pz, frac));
+          break;
+        }
+      }
+    }
+    return best;
   };
 
   // Street level at a point: road-surface height of the nearest NON-BRIDGE road whose
@@ -396,36 +421,17 @@ function buildWorld(data, lat0, lon0, radiusMi, heightAt, overture, playMi) {
   for (const r of roadPolys) {
     const pts = r.pts; roadLines.push(pts); const hw = r.w / 2;
     if (r.bridge) {
-      const dd = densify(pts, 3);                          // finer -> smoother ramps
-      const a = pts[0], b = pts[pts.length-1];
-      let lowest = Infinity, spanLen = 0;
-      for (let i = 0; i < dd.length; i++) {
-        lowest = Math.min(lowest, terrain(dd[i].x, dd[i].z));
-        if (i > 0) spanLen += Math.hypot(dd[i].x - dd[i-1].x, dd[i].z - dd[i-1].z);
-      }
-      let waterY = -Infinity; for (const pt of dd) { const wy = waterYAt(pt.x, pt.z); if (wy > waterY) waterY = wy; }
-      // Build a raised deck for any real-length span OR ANY crossing over water — so even a
-      // SHORT tagged bridge over a narrow creek arcs clearly above the water (and is added to
-      // bridges[] so the car RIDES the deck). The old `spanLen >= 11`-only gate left creek
-      // bridges flat at water level.
-      if (spanLen >= 11 || waterY > -Infinity) {
-        // gentle clearance for short creek spans, full clearance for real bridges
-        const clearance = Math.min(6, Math.max(spanLen >= 11 ? 3 : 1.5, spanLen * 0.06));
-        // shared plateau for the whole connected structure (falls back to this way's own value)
-        const plateau = plateauFor(a.x, a.z) ?? (Math.max(waterY, lowest) + clearance);   // deck top across the middle
-        // Deck ENDS exactly match the approach-road surface (roadY) at the bridge endpoints, so
-        // the deck joins the street with NO step; the smooth arc lifts the middle to clear the
-        // water. roadY itself never sits below water, so the whole arc (>= its ends) clears the
-        // river — no per-point "floor" needed (that floor stepped the deck at the shoreline and
-        // lifted dry ramp ends off the road). `-0.2` cancels deckFn's deck-thickness offset so
-        // the deck TOP lands on the road surface, not 0.2 m above it.
-        const eStart = isJoint(a.x, a.z) ? plateau : roadY(a.x, a.z) - 0.2;
-        const eEnd   = isJoint(b.x, b.z) ? plateau : roadY(b.x, b.z) - 0.2;
-        const deckFn = (x, z, frac) => { const base = eStart + (eEnd - eStart) * frac; return base + Math.max(0, plateau - base) * bridgeBump(frac) + 0.2; };
-        ribbon(pts, hw, roadPos, deckFn);
-        if (r.w >= 7) emitDashes(pts, (x, z, f) => deckFn(x, z, f) + 0.06);  // decks get centre lines too
-        bridgeStructure(pts, hw, deckFn, bridgePos, streetLevelAt, nearMerge);
-        bridges.push({ pts: dd, hw, eStart, eEnd, plateau, waterY });
+      // Deck profile (or "not raised") was computed in the pre-pass above; raised decks
+      // exist for any real-length span OR ANY crossing over water — so even a SHORT tagged
+      // bridge over a narrow creek arcs clearly above the water (and is added to bridges[]
+      // so the car RIDES the deck). Deck ENDS exactly match the approach-road surface at
+      // the endpoints (no step); the smooth arc lifts the middle to the shared plateau.
+      const dk = r._deck;
+      if (dk && dk.raised) {
+        ribbon(pts, hw, roadPos, dk.deckFn);
+        if (r.w >= 7) emitDashes(pts, (x, z, f) => dk.deckFn(x, z, f) + 0.06);  // decks get centre lines too
+        bridgeStructure(pts, hw, dk.deckFn, bridgePos, streetLevelAt, (x, z) => otherDeckAt(x, z, dk));
+        bridges.push({ pts: dk.dd, hw, eStart: dk.eStart, eEnd: dk.eEnd, plateau: dk.plateau, waterY: dk.waterY });
       } else {
         ribbon(pts, hw, roadPos, roadY);
       }

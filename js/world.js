@@ -764,9 +764,11 @@ function ribbon(rawPts, hw, out, yFn) {
 // Bridge structure: parapets, slab underside, and support pillars to the ground.
 // streetLevel(x,z) (optional) returns the surface height of a non-bridge road covering that
 // point (else -Infinity) — used to keep supports off cross-streets and to OPEN the rails
-// where a street crosses the deck at its own level. nearMerge(x,z) (optional) reports merge/
-// fork gore junctions, where rails must also open (elevated on-ramps join the deck there).
-function bridgeStructure(rawPts, hw, deckFn, out, streetLevel, nearMerge) {
+// where a street crosses the deck at its own level. otherDeck(x,z) (optional) returns the
+// height of any OTHER bridge deck covering the point (else -Infinity) — the rail opens where
+// that deck runs at this deck's level (ramp merges, fork gores, parallel carriageways),
+// because the pavement genuinely continues past the edge there.
+function bridgeStructure(rawPts, hw, deckFn, out, streetLevel, otherDeck) {
   const pts = densify(rawPts, 3);                          // match the deck so the fascia follows it smoothly
   const n = pts.length; if (n < 2) return;
   const RAIL_H = 0.95;
@@ -799,7 +801,8 @@ function bridgeStructure(rawPts, hw, deckFn, out, streetLevel, nearMerge) {
       const mx = (x1 + x2) / 2, mz = (z1 + z2) / 2;
       const drop = deck[i] - terrain(mx, mz);
       if (drop <= 0.9) return 0;
-      if (nearMerge && nearMerge(mx, mz)) return 0;  // ramp merge/fork gore: leave it open
+      const oy = otherDeck ? otherDeck(mx, mz) : -Infinity;
+      if (oy > -Infinity && Math.abs(deck[i] - oy) < 2.0) return 0;  // another deck continues at this level
       const sy = streetLevel ? streetLevel(mx, mz) : -Infinity;
       if (sy > -Infinity && deck[i] < sy + 2.4) return 0;
       return drop > 1.6 ? 2 : 1;
