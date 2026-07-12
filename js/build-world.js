@@ -440,7 +440,34 @@ function buildWorld(data, lat0, lon0, radiusMi, heightAt, overture, playMi) {
       if (r.w >= 7) emitDashes(pts, (x, z) => surfaceHeight(x, z) + 0.22);  // centre line on bigger streets
     }
   }
-  buildSidewalks(roadPolys, gsz, waterYAt); // ONE unified band offset from the whole road network
+  // Where a road ends in (or crosses) a parking lot, it must FLOW into the pavement —
+  // the sidewalk band otherwise wraps the road tip and caps the lot entrance with a curb.
+  // Scanline-rasterize the lot polygons into a coarse mask (cell-centre, even-odd rule).
+  const PKC = 1.2, pkW = Math.ceil(gsz / PKC), pkMin = -gsz / 2;
+  const pkMask = new Uint8Array(pkW * pkW);
+  for (const poly of parkingPolys) {
+    if (poly.length < 3) continue;
+    let zLo = 1e9, zHi = -1e9;
+    for (const p of poly) { if (p.z < zLo) zLo = p.z; if (p.z > zHi) zHi = p.z; }
+    const j0 = Math.max(0, Math.floor((zLo - pkMin) / PKC)), j1 = Math.min(pkW - 1, Math.ceil((zHi - pkMin) / PKC));
+    for (let j = j0; j <= j1; j++) {
+      const cz = pkMin + (j + 0.5) * PKC, xs = [];
+      for (let i = 0, k = poly.length - 1; i < poly.length; k = i++) {
+        const a = poly[i], b = poly[k];
+        if ((a.z > cz) !== (b.z > cz)) xs.push(a.x + (cz - a.z) * (b.x - a.x) / (b.z - a.z));
+      }
+      xs.sort((p, q) => p - q);
+      for (let s = 0; s + 1 < xs.length; s += 2) {
+        const i0 = Math.max(0, Math.floor((xs[s] - pkMin) / PKC)), i1 = Math.min(pkW - 1, Math.floor((xs[s+1] - pkMin) / PKC));
+        for (let i = i0; i <= i1; i++) pkMask[j * pkW + i] = 1;
+      }
+    }
+  }
+  const inParking = (x, z) => {
+    const i = Math.floor((x - pkMin) / PKC), j = Math.floor((z - pkMin) / PKC);
+    return i >= 0 && j >= 0 && i < pkW && j < pkW && pkMask[j * pkW + i] === 1;
+  };
+  buildSidewalks(roadPolys, gsz, waterYAt, inParking); // ONE unified band offset from the whole road network
   if (roadPos.length) worldGroup.add(texMesh(roadPos, asphaltTex, 1/7, 0x484c55, false)); // speckled asphalt, planar UVs
   if (dashPos.length) { const m = flatMesh(dashPos, 0xd9c25a, false); m.material.emissive = new THREE.Color(0x3a3318); worldGroup.add(m); }
   if (bridgePos.length) { const m = flatMesh(bridgePos, 0x8a8f98, true); m.material.side = THREE.DoubleSide; m.castShadow = true; worldGroup.add(m); }

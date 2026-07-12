@@ -263,7 +263,9 @@ function buildHouses(residentialPolys, buildingPolys, roadLines) {
 // that band (cell edges linearly interpolated where sdf=0 or sdf=W) yields smooth edges and corners
 // that round naturally (the euclidean offset of the road union) — with NO per-junction geometry, so
 // nothing can spike, overlap or fragment. A short vertical curb face is dropped along the sdf=0 line.
-function buildSidewalks(roads, gsz, waterYAt) {
+// skipAt(x,z) (optional) suppresses cells — used for parking lots, where a road must FLOW into
+// the pavement instead of being capped by a sidewalk strip across the entrance.
+function buildSidewalks(roads, gsz, waterYAt, skipAt) {
   const W = 1.7, cell = 0.6, minX = -gsz/2, minZ = -gsz/2;
   const nx = Math.ceil(gsz/cell)+1, nz = Math.ceil(gsz/cell)+1;
   const sdf = new Float32Array(nx*nz).fill(1e9);
@@ -324,6 +326,7 @@ function buildSidewalks(roads, gsz, waterYAt) {
     const s00=sdf[iz*nx+ix], s10=sdf[iz*nx+ix+1], s11=sdf[(iz+1)*nx+ix+1], s01=sdf[(iz+1)*nx+ix];
     if (Math.min(s00,s10,s11,s01) > W || Math.max(s00,s10,s11,s01) < 0) continue;
     const x0 = minX+ix*cell, z0 = minZ+iz*cell, x1 = x0+cell, z1 = z0+cell;
+    if (skipAt && skipAt(x0 + cell/2, z0 + cell/2)) continue;   // e.g. inside a parking lot
     let poly = [{x:x0,z:z0,s:s00},{x:x1,z:z0,s:s10},{x:x1,z:z1,s:s11},{x:x0,z:z1,s:s01}];
     poly = clip(poly, true, 0); if (poly.length>=3) poly = clip(poly, false, W);
     if (poly.length < 3) continue;
