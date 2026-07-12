@@ -129,7 +129,12 @@ async function spApi(method, path, body) {
 // here. NOTE the SDK plays through its own DRM media element, so it can't run
 // through the radioChain() dash-speaker filter — volume is matched instead.
 //----------------------------------------------------------------------------
-const sp = { player: null, deviceId: null, ready: null, tuned: false, lastTrack: null };
+const sp = { player: null, deviceId: null, ready: null, tuned: false, lastTrack: null, poll: null };
+
+// Mobile browsers can't run the SDK's DRM playback (it reports state but stays
+// silent), so on touch devices the game is a REMOTE instead: playback starts on
+// the user's own Spotify app via the Connect API and the dash mirrors it.
+const SP_REMOTE = matchMedia('(pointer: coarse)').matches;
 
 function spLoadSdk() {
   if (window.Spotify) return Promise.resolve();
@@ -156,12 +161,7 @@ function spInitPlayer() {
     player.addListener('initialization_error', () => reject(new Error('init error')));
     player.addListener('player_state_changed', (st) => {
       if (!st || !sp.tuned) return;
-      const tr = st.track_window.current_track;
-      if (tr && tr.id !== sp.lastTrack) {                // toast on track change only
-        sp.lastTrack = tr.id;
-        const label = tr.name + ' — ' + tr.artists.map((a) => a.name).join(', ');
-        spToast(label); spLcd('♪ ' + label);
-      }
+      spShowTrack(st.track_window.current_track);
     });
     player.connect().then((ok) => { if (!ok) reject(new Error('connect failed')); });
     sp.player = player;
@@ -176,6 +176,21 @@ function spToast(text) {
 function spLcd(text) {                                   // dash head-unit readout
   if (typeof setNowPlaying === 'function') setNowPlaying(text);
 }
+function spShowTrack(tr) {                               // toast + LCD, on track change only
+  if (!tr || !sp.tuned || tr.id === sp.lastTrack) return;
+  sp.lastTrack = tr.id;
+  const label = tr.name + ' — ' + tr.artists.map((a) => a.name).join(', ');
+  spToast(label); spLcd('♪ ' + label);
+}
+
+async function spLikedUris() {                           // Liked Songs, shuffled
+  const liked = await spApi('GET', '/me/tracks?limit=50');
+  const uris = ((liked && liked.items) || []).map((i) => i.track.uri);
+  for (let i = uris.length - 1; i > 0; i--) {
+    const j = (Math.random() * (i + 1)) | 0; [uris[i], uris[j]] = [uris[j], uris[i]];
+  }
+  return uris;
+}
 
 // Pull playback to this tab and start the Spotify DJ. The DJ has no official
 // API, but its hidden playlist URI starts it like any other context — an
@@ -188,13 +203,46 @@ async function spStartPlayback() {
   await new Promise((r) => setTimeout(r, 1500));
   const st = await sp.player.getCurrentState();
   if (st && st.track_window.current_track && !st.paused) return;
-  const liked = await spApi('GET', '/me/tracks?limit=50');
-  const uris = ((liked && liked.items) || []).map((i) => i.track.uri);
+  const uris = await spLikedUris();
   if (!uris.length) { spToast('nothing to play — like some songs first'); return; }
-  for (let i = uris.length - 1; i > 0; i--) {            // shuffle
-    const j = (Math.random() * (i + 1)) | 0; [uris[i], uris[j]] = [uris[j], uris[i]];
-  }
   await spApi('PUT', '/me/player/play?device_id=' + sp.deviceId, { uris });
+}
+
+//----------------------------------------------------------------------------
+// Remote mode (mobile): start the DJ on the user's own Spotify app and poll
+// /me/player to mirror it on the dash. Audio comes from the app, not this tab.
+//----------------------------------------------------------------------------
+async function spRemoteStart() {
+  const d = await spApi('GET', '/me/player/devices');
+  const devs = (d && d.devices) || [];
+  const dev = devs.find((x) => x.is_active) || devs.find((x) => x.type === 'Smartphone') || devs[0];
+  if (!dev) {                                            // Connect only sees the app while it's awake
+    spToast('open your Spotify app, play anything briefly, then retune');
+    spLcd('SPOTIFY — open your Spotify app');
+    return;
+  }
+  try { await spApi('PUT', '/me/player/play?device_id=' + dev.id, { context_uri: SP_DJ_URI }); }
+  catch (e) {
+    try { await spApi('PUT', '/me/player/play?device_id=' + dev.id); }        // resume whatever it had
+    catch (e2) {
+      const uris = await spLikedUris();
+      if (!uris.length) { spToast('nothing to play — like some songs first'); return; }
+      await spApi('PUT', '/me/player/play?device_id=' + dev.id, { uris });
+    }
+  }
+  spToast('playing on ' + dev.name);
+  spPollStart();
+}
+
+function spPollStart() {                                 // mirror the remote device's track
+  clearInterval(sp.poll);
+  sp.poll = setInterval(async () => {
+    if (!sp.tuned || document.hidden) return;
+    try {
+      const st = await spApi('GET', '/me/player');
+      if (st && st.is_playing) spShowTrack(st.item);
+    } catch (e) {}
+  }, 5000);
 }
 
 //----------------------------------------------------------------------------
@@ -210,6 +258,7 @@ async function spotifyTune() {
       if (!sp.tuned) return;                             // user dialed away while logging in
     }
     spToast('tuning…'); spLcd('SPOTIFY — tuning…');
+    if (SP_REMOTE) { await spRemoteStart(); return; }
     await spInitPlayer();
     if (!sp.tuned) return;
     await spStartPlayback();
@@ -222,5 +271,7 @@ async function spotifyTune() {
 function spotifyDetune() {
   if (!sp.tuned) return;
   sp.tuned = false;
+  clearInterval(sp.poll); sp.poll = null;
+  if (SP_REMOTE) { spApi('PUT', '/me/player/pause').catch(() => {}); return; }
   if (sp.player) sp.player.pause().catch(() => {});
 }
