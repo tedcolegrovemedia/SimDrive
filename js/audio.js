@@ -7,15 +7,46 @@
 //----------------------------------------------------------------------------
 // Context bootstrap: browsers only allow audio after a user gesture.
 //----------------------------------------------------------------------------
+// iOS silences Web Audio while the ring/silent switch is on silent — unless the
+// page's audio session is "playback" (media, follows the volume buttons). Declare
+// that via navigator.audioSession (iOS 17+), and ALSO keep a looping silent
+// <audio> element playing (flips the session to playback on older iOS).
+function silentWavUrl() {                    // 0.5 s of 8-bit silence, built in memory
+  const rate = 8000, n = rate / 2, buf = new ArrayBuffer(44 + n), v = new DataView(buf);
+  const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  w(0, 'RIFF'); v.setUint32(4, 36 + n, true); w(8, 'WAVEfmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true);
+  w(36, 'data'); v.setUint32(40, n, true);
+  new Uint8Array(buf, 44).fill(128);
+  return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+}
+let _mediaUnlock = null;
+
 function ensureAudio() {
   try {
+    try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
+    if (!_mediaUnlock) {
+      _mediaUnlock = document.createElement('audio');
+      _mediaUnlock.setAttribute('playsinline', ''); _mediaUnlock.loop = true;
+      _mediaUnlock.src = silentWavUrl();
+    }
+    if (_mediaUnlock.paused) _mediaUnlock.play().catch(() => {});   // needs a gesture; we're in one
     audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
     if (audioCtx.state === 'suspended') audioCtx.resume();
     initEngine();
   } catch (e) {}
 }
 addEventListener('pointerdown', ensureAudio);
+addEventListener('touchend', ensureAudio);   // iOS historically only unlocks media in touchend
 addEventListener('keydown', ensureAudio);
+// mobile browsers suspend the context when the tab is backgrounded and don't
+// always resume it — kick it (and the unlock loop) when we come back
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  if (_mediaUnlock && _mediaUnlock.paused) _mediaUnlock.play().catch(() => {});
+});
 
 // 1s of white noise, shared by hats/snares/static/wind (created lazily per context)
 let _noiseBuf = null;
