@@ -168,14 +168,20 @@ function radioStatic() {             // tuning blip between stations
   hit(radioChain(), audioCtx.currentTime, { dur: 0.22, vol: 0.1, fq: 3000, type: 'bandpass' });
 }
 
+// The dial: generative stations, then SPOTIFY (js/spotify.js, only when a
+// Client ID is configured there), then off. radio.idx === STATIONS.length
+// means the Spotify station — the synth scheduler stays silent on it.
 function cycleRadio() {
   ensureAudio(); if (!audioCtx) return;
+  const count = STATIONS.length + (spotifyAvailable() ? 1 : 0);
   if (!radio.on) { radio.on = true; radio.idx = 0; }
-  else if (radio.idx < STATIONS.length - 1) radio.idx++;
+  else if (radio.idx < count - 1) radio.idx++;
   else radio.on = false;
   radio.nextT = audioCtx.currentTime + 0.25; radio.step = 0;
   radioStatic();
-  showRadioToast(radio.on ? '📻 ' + STATIONS[radio.idx].name : '📻 radio off');
+  const onSpotify = radio.on && radio.idx === STATIONS.length;
+  if (onSpotify) spotifyTune(); else spotifyDetune();
+  if (!onSpotify) showRadioToast(radio.on ? '📻 ' + STATIONS[radio.idx].name : '📻 radio off');
 }
 
 let _toastTimer = null;
@@ -186,7 +192,7 @@ function showRadioToast(text) {
 }
 
 function updateRadio() {
-  if (!radio.on || !audioCtx) return;
+  if (!radio.on || !audioCtx || radio.idx >= STATIONS.length) return;  // Spotify station: SDK plays, not us
   const st = STATIONS[radio.idx], spb16 = 60 / st.bpm / 4, dest = radioChain();
   if (radio.nextT < audioCtx.currentTime - 0.5) radio.nextT = audioCtx.currentTime; // tab was asleep
   while (radio.nextT < audioCtx.currentTime + 0.15) {              // ~150 ms lookahead
