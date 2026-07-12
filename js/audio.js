@@ -181,7 +181,10 @@ function cycleRadio() {
   radioStatic();
   const onSpotify = radio.on && radio.idx === STATIONS.length;
   if (onSpotify) spotifyTune(); else spotifyDetune();
-  if (!onSpotify) showRadioToast(radio.on ? '📻 ' + STATIONS[radio.idx].name : '📻 radio off');
+  if (!onSpotify) {
+    showRadioToast(radio.on ? '📻 ' + STATIONS[radio.idx].name : '📻 radio off');
+    setNowPlaying(radio.on ? STATIONS[radio.idx].name : null);   // spotify.js sets its own
+  }
 }
 
 let _toastTimer = null;
@@ -189,6 +192,21 @@ function showRadioToast(text) {
   const el = document.getElementById('radioToast'); if (!el) return;
   el.textContent = text; el.classList.remove('hidden');
   clearTimeout(_toastTimer); _toastTimer = setTimeout(() => el.classList.add('hidden'), 2600);
+}
+
+// Head-unit LCD on the dashboard: persistent station / now-playing readout
+// (the toast above is transient). null hides it; long text marquee-scrolls.
+function setNowPlaying(text) {
+  const box = document.getElementById('nowPlaying'), span = document.getElementById('npText');
+  if (!box || !span) return;
+  box.classList.toggle('hidden', !text);
+  span.classList.remove('scroll'); span.style.animationDuration = '';
+  span.textContent = text || '';
+  if (text && span.scrollWidth > box.clientWidth - 14) {   // overflows the LCD: loop it
+    span.textContent = text + '   ' + text; // two copies; scroll -50% loops seamlessly
+    span.style.animationDuration = (text.length * 0.32) + 's';
+    span.classList.add('scroll');
+  }
 }
 
 function updateRadio() {

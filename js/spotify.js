@@ -159,7 +159,8 @@ function spInitPlayer() {
       const tr = st.track_window.current_track;
       if (tr && tr.id !== sp.lastTrack) {                // toast on track change only
         sp.lastTrack = tr.id;
-        spToast(tr.name + ' — ' + tr.artists.map((a) => a.name).join(', '));
+        const label = tr.name + ' — ' + tr.artists.map((a) => a.name).join(', ');
+        spToast(label); spLcd('♪ ' + label);
       }
     });
     player.connect().then((ok) => { if (!ok) reject(new Error('connect failed')); });
@@ -171,6 +172,9 @@ function spInitPlayer() {
 
 function spToast(text) {
   if (typeof showRadioToast === 'function') showRadioToast('📻 SPOTIFY — ' + text);
+}
+function spLcd(text) {                                   // dash head-unit readout
+  if (typeof setNowPlaying === 'function') setNowPlaying(text);
 }
 
 // Pull playback to this tab and start the Spotify DJ. The DJ has no official
@@ -198,18 +202,20 @@ async function spStartPlayback() {
 //----------------------------------------------------------------------------
 async function spotifyTune() {
   sp.tuned = true; sp.lastTrack = null;
+  spLcd('SPOTIFY');
   try {
     if (!(await spToken())) {
       spToast('connect in the popup…');
       await spAuthPopup();
       if (!sp.tuned) return;                             // user dialed away while logging in
     }
-    spToast('tuning…');
+    spToast('tuning…'); spLcd('SPOTIFY — tuning…');
     await spInitPlayer();
     if (!sp.tuned) return;
     await spStartPlayback();
   } catch (e) {
-    if (sp.tuned) spToast((e && e.message) || 'unavailable');
+    const msg = (e && e.message) || 'unavailable';
+    if (sp.tuned) { spToast(msg); spLcd('SPOTIFY — ' + msg); }
   }
 }
 
