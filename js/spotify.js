@@ -173,10 +173,14 @@ function spToast(text) {
   if (typeof showRadioToast === 'function') showRadioToast('📻 SPOTIFY — ' + text);
 }
 
-// Pull playback to this tab. Resumes whatever the account was last playing;
-// if the account has nothing to resume, falls back to shuffling Liked Songs.
+// Pull playback to this tab and start the Spotify DJ. The DJ has no official
+// API, but its hidden playlist URI starts it like any other context — an
+// unofficial trick that may break someday, so if nothing is playing after the
+// attempt we fall back to shuffling Liked Songs.
+const SP_DJ_URI = 'spotify:playlist:37i9dQZF1EYkqdzj48dyYq';
 async function spStartPlayback() {
-  await spApi('PUT', '/me/player', { device_ids: [sp.deviceId], play: true });
+  await spApi('PUT', '/me/player', { device_ids: [sp.deviceId] });   // make this tab the active device
+  try { await spApi('PUT', '/me/player/play?device_id=' + sp.deviceId, { context_uri: SP_DJ_URI }); } catch (e) {}
   await new Promise((r) => setTimeout(r, 1500));
   const st = await sp.player.getCurrentState();
   if (st && st.track_window.current_track && !st.paused) return;
