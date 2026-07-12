@@ -10,6 +10,7 @@ addEventListener('keydown', e => {
   if (!worldReady) return;
   const k = e.key.toLowerCase(); keys[k] = true;
   if (k === 'h') horn(); if (k === 'c') chaseCam = !chaseCam;
+  if (k === 'r') cycleRadio();
   if ([' ','arrowup','arrowdown','arrowleft','arrowright'].includes(k)) e.preventDefault();
 });
 addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
@@ -32,6 +33,8 @@ bindTouchBtn('tLeft', 'a'); bindTouchBtn('tRight', 'd');
 bindTouchBtn('tGas', 'w');  bindTouchBtn('tBrake', 's');
 // Camera button mirrors the C key (the only way to switch views on a phone)
 document.getElementById('camView').addEventListener('click', () => { chaseCam = !chaseCam; });
+// Radio button mirrors the R key (the only way to change stations on a phone)
+document.getElementById('radioBtn').addEventListener('click', () => cycleRadio());
 
 // Build stamp in the Controls popover: newest Last-Modified among the loaded app files
 // (set by bootstrap.js). Lets anyone confirm which deploy their device is actually running.
@@ -147,6 +150,7 @@ let last = performance.now(), fpsAcc = 0, fpsCount = 0, miniTick = 0;
 function loop(now) {
   let dt = (now - last) / 16.6667; last = now;
   if (dt > 4) dt = 4; if (dt <= 0) dt = 1;
+  updateAudio();   // engine follows speed/throttle; radio scheduler runs even in the picker
   if (worldReady) {
     updateSignals(dt); updatePlayer(dt); updateNPCs(dt); updateCamera(); updateGear();
     skyDome.position.copy(camera.position);   // sky stays centred on the camera

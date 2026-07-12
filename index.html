@@ -41,15 +41,18 @@
 <!-- top-right buttons + Controls popover -->
 <div id="topbtns">
   <button id="camView">🎥 Camera</button>
+  <button id="radioBtn">📻 Radio</button>
   <button id="controls">⌨ Controls</button>
   <button id="newLoc">⌖ New location</button>
 </div>
+<div id="radioToast" class="hidden"></div>
 <div id="help" class="hidden">
   <div class="help-title">Controls</div>
   <div class="help-row"><span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / arrows</span> <span>drive</span></div>
   <div class="help-row"><span><kbd>Space</kbd></span> <span>brake</span></div>
   <div class="help-row"><span><kbd>H</kbd></span> <span>horn</span></div>
   <div class="help-row"><span><kbd>C</kbd></span> <span>camera</span></div>
+  <div class="help-row"><span><kbd>R</kbd></span> <span>radio station</span></div>
   <div class="help-row" id="buildStamp"></div>
 </div>
 <div id="fps"></div>
@@ -84,6 +87,6 @@
   "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
 } }
 </script>
-<script type="module" src="js/bootstrap.js?v=3"></script><!-- bump ?v whenever bootstrap.js changes (it's edge-cached) -->
+<script type="module" src="js/bootstrap.js?v=4"></script><!-- bump ?v whenever bootstrap.js changes (it's edge-cached) -->
 </body>
 </html>
