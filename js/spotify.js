@@ -15,7 +15,7 @@
 // interrupted by a redirect: the popup bounces to Spotify and back to this same
 // page, the early handler below stores the tokens and closes it, and the opener
 // picks them up from localStorage. Tokens persist, so login happens once.
-const SPOTIFY_CLIENT_ID = '';   // <-- paste your Client ID here
+const SPOTIFY_CLIENT_ID = 'e4fc61a7fbe743d9a62fecdb4ede71e4';   // <-- paste your Client ID here
 
 const SP_SCOPES = 'streaming user-read-email user-read-private user-read-playback-state user-modify-playback-state user-library-read';
 const spClientId = () => localStorage.getItem('sp_client_id') || SPOTIFY_CLIENT_ID;
@@ -31,7 +31,8 @@ function spotifyAvailable() { return !!spClientId(); }
   const q = new URLSearchParams(location.search);
   if (!q.has('code') && !q.has('error')) return;
   history.replaceState({}, '', spRedirect());          // clean URL either way
-  if (q.has('error')) { if (window.opener) window.close(); return; }
+  const fail = () => location.replace('/error/');      // any auth failure lands on the error page
+  if (q.has('error')) return fail();
   try {
     const verifier = localStorage.getItem('sp_verifier');
     const r = await fetch('https://accounts.spotify.com/api/token', {
@@ -42,8 +43,9 @@ function spotifyAvailable() { return !!spClientId(); }
       }),
     });
     const t = await r.json();
-    if (t.access_token) spStoreTokens(t);
-  } catch (e) {}
+    if (!t.access_token) return fail();
+    spStoreTokens(t);
+  } catch (e) { return fail(); }
   if (window.opener) { document.body.textContent = 'Connected — you can close this window.'; window.close(); }
 })();
 
