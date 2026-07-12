@@ -65,8 +65,8 @@ function updateEngineAudio() {
   engine.o2.frequency.setTargetAtTime(freq * 1.5, t, 0.06);      // harmonic gives it "motor" body
   engine.sub.frequency.setTargetAtTime(freq / 2, t, 0.08);       // exhaust rumble
   engine.lp.frequency.setTargetAtTime(240 + frac * 850 + throttle * 450, t, 0.1);
-  engine.out.gain.setTargetAtTime(driving ? 0.028 + 0.045 * frac + 0.028 * throttle : 0, t, 0.1);
-  engine.wg.gain.setTargetAtTime(Math.min(0.045, mph * 0.0006), t, 0.2);  // wind/road past ~20 mph
+  engine.out.gain.setTargetAtTime(driving ? 0.009 + 0.015 * frac + 0.009 * throttle : 0, t, 0.1);
+  engine.wg.gain.setTargetAtTime(Math.min(0.018, mph * 0.00025), t, 0.2);  // wind/road past ~20 mph
 }
 
 //----------------------------------------------------------------------------
