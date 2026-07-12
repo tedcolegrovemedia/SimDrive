@@ -238,6 +238,27 @@ function buildWorld(data, lat0, lon0, radiusMi, heightAt, overture, playMi) {
   // and the ribbon/sidewalk/mask/graph all build from the same smoothed centreline.
   for (const r of roadPolys) r.pts = roundCorners(r.pts, 2);
   const roadPos = [], dashPos = [], bridgePos = [], roadLines = [];
+  // Dashed centre line along a polyline; yAt(x, z, fracAlongLine) gives the surface height
+  // (surfaceHeight for streets, deckFn for bridge decks — decks without dashes read as voids).
+  const emitDashes = (pts, yAt) => {
+    let total = 0; const cum = [0];
+    for (let i = 0; i < pts.length - 1; i++) { total += Math.hypot(pts[i+1].x-pts[i].x, pts[i+1].z-pts[i].z); cum.push(total); }
+    if (total < 8) return;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i], b = pts[i+1];
+      const dx = b.x - a.x, dz = b.z - a.z, len = Math.hypot(dx, dz) || 1;
+      const ux = dx/len, uz = dz/len, px = -uz*0.2, pz = ux*0.2;
+      for (let d = 2; d < len - 2; d += 7) {
+        const t1 = Math.min(d + 3, len - 1);
+        const ax = a.x+ux*d, az = a.z+uz*d, bx = a.x+ux*t1, bz = a.z+uz*t1;
+        const ya = yAt(ax, az, (cum[i]+d)/total), yb = yAt(bx, bz, (cum[i]+t1)/total);
+        dashPos.push(
+          ax+px, ya, az+pz,  bx-px, yb, bz-pz,  ax-px, ya, az-pz,
+          ax+px, ya, az+pz,  bx+px, yb, bz+pz,  bx-px, yb, bz-pz
+        );
+      }
+    }
+  };
   // Roads/sidewalks never sink below the water surface — where the DEM dips below the
   // water near a shore, the road rides just over it instead of being drawn submerged.
   // (waterYAt is defined just below; these closures only run later, in the road loop.)
@@ -339,9 +360,17 @@ function buildWorld(data, lat0, lon0, radiusMi, heightAt, overture, playMi) {
       j.n++; j.widths.add(r.w);
     }
   }
-  const mergeNodes = [...jmap.values()].filter(j => j.n >= 3 || j.widths.size >= 2);
+  // n>=3 is a true fork/merge. A 2-way joint only counts when the widths differ enough to
+  // be a ramp joining a mainline (>=1.4x) — mere classification changes along one road
+  // (residential->tertiary etc.) were blanketing whole interchanges in "merge" circles,
+  // stripping the rails off entire elevated decks.
+  const mergeNodes = [...jmap.values()].filter(j => {
+    if (j.n >= 3) return true;
+    if (j.widths.size >= 2) { const ws = [...j.widths]; return Math.max(...ws) / Math.min(...ws) >= 1.4; }
+    return false;
+  });
   const nearMerge = (x, z) => {
-    for (const j of mergeNodes) { const dx = x - j.x, dz = z - j.z; if (dx*dx + dz*dz < 26*26) return true; }
+    for (const j of mergeNodes) { const dx = x - j.x, dz = z - j.z; if (dx*dx + dz*dz < 15*15) return true; }
     return false;
   };
 
@@ -394,6 +423,7 @@ function buildWorld(data, lat0, lon0, radiusMi, heightAt, overture, playMi) {
         const eEnd   = isJoint(b.x, b.z) ? plateau : roadY(b.x, b.z) - 0.2;
         const deckFn = (x, z, frac) => { const base = eStart + (eEnd - eStart) * frac; return base + Math.max(0, plateau - base) * bridgeBump(frac) + 0.2; };
         ribbon(pts, hw, roadPos, deckFn);
+        if (r.w >= 7) emitDashes(pts, (x, z, f) => deckFn(x, z, f) + 0.06);  // decks get centre lines too
         bridgeStructure(pts, hw, deckFn, bridgePos, streetLevelAt, nearMerge);
         bridges.push({ pts: dd, hw, eStart, eEnd, plateau, waterY });
       } else {
@@ -401,22 +431,7 @@ function buildWorld(data, lat0, lon0, radiusMi, heightAt, overture, playMi) {
       }
     } else {
       ribbon(pts, hw, roadPos, roadY);             // asphalt
-      if (r.w >= 7) {                              // dashed centre line on bigger streets
-        for (let i = 0; i < pts.length - 1; i++) {
-          const a = pts[i], b = pts[i+1];
-          let dx = b.x - a.x, dz = b.z - a.z; const len = Math.hypot(dx, dz) || 1;
-          const ux = dx/len, uz = dz/len, px = -uz*0.2, pz = ux*0.2;
-          for (let d = 2; d < len - 2; d += 7) {
-            const t1 = Math.min(d + 3, len - 1);
-            const ax = a.x+ux*d, az = a.z+uz*d, bx = a.x+ux*t1, bz = a.z+uz*t1;
-            const ya = surfaceHeight(ax, az) + 0.22, yb = surfaceHeight(bx, bz) + 0.22;
-            dashPos.push(
-              ax+px, ya, az+pz,  bx-px, yb, bz-pz,  ax-px, ya, az-pz,
-              ax+px, ya, az+pz,  bx+px, yb, bz+pz,  bx-px, yb, bz-pz
-            );
-          }
-        }
-      }
+      if (r.w >= 7) emitDashes(pts, (x, z) => surfaceHeight(x, z) + 0.22);  // centre line on bigger streets
     }
   }
   buildSidewalks(roadPolys, gsz, waterYAt); // ONE unified band offset from the whole road network

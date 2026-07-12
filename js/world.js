@@ -790,7 +790,12 @@ function bridgeStructure(rawPts, hw, deckFn, out, streetLevel, nearMerge) {
     // across the street. Each SIDE is judged at its own rail line: no drop or an at-grade
     // street there -> no rail/wall on that side. Genuine underpasses (street 2.4+ below the
     // deck) keep their walls.
+    // If the deck is grounded/buried at the CENTRELINE (ramps cutting across a hillside),
+    // there is no visible bridge here — rails on the downhill side would poke out of the
+    // grass as floating fins. No rails on either side.
+    const grounded = deck[i] - terrain(pts[i].x, pts[i].z) <= 0.9;
     const railMode = (x1, z1, x2, z2) => {          // 0 none | 1 visible rail | 2 rail + crash wall
+      if (grounded) return 0;
       const mx = (x1 + x2) / 2, mz = (z1 + z2) / 2;
       const drop = deck[i] - terrain(mx, mz);
       if (drop <= 0.9) return 0;
