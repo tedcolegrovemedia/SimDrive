@@ -162,26 +162,27 @@ function setCar(i) {            // 2D HUD now — no 3D cockpit to build
 setCar(0);
 
 //----------------------------------------------------------------------------
-// Collision grid (rasterized building/water footprints)
+// Collision grid (rasterized building/water footprints) — one grid PER TILE;
+// lookups dispatch by position. An unbuilt tile is solid: the world's edge is
+// wherever the streamer hasn't caught up yet, and it opens as tiles land.
 //----------------------------------------------------------------------------
-let grid = null, gridCell = 2.5, gridMinX = 0, gridMinZ = 0, gridW = 0, gridH = 0;
-let roadMask = null;                       // 1 = drivable pavement (roads + bridges)
-let fenceHalf = Infinity;                  // invisible square wall: |x|,|z| can't exceed this
+let gridCell = 2.5;
 function blocked(wx, wz) {
-  if (Math.abs(wx) > fenceHalf || Math.abs(wz) > fenceHalf) return true; // map edge
-  if (!grid) return false;
-  const cx = ((wx - gridMinX) / gridCell) | 0;
-  const cz = ((wz - gridMinZ) / gridCell) | 0;
-  if (cx < 0 || cz < 0 || cx >= gridW || cz >= gridH) return false;
-  return grid[cz * gridW + cx] === 1;
+  const t = builtTileAt(wx, wz);
+  if (!t || !t.grid) return true;          // off the built world: invisible frontier wall
+  const cx = ((wx - t.gMinX) / gridCell) | 0;
+  const cz = ((wz - t.gMinZ) / gridCell) | 0;
+  if (cx < 0 || cz < 0 || cx >= t.gW || cz >= t.gH) return false;
+  return t.grid[cz * t.gW + cx] === 1;
 }
 // Is this spot on the paved road surface? Used to drag the car when it leaves the road.
 function onRoad(wx, wz) {
-  if (!roadMask) return true;
-  const cx = ((wx - gridMinX) / gridCell) | 0;
-  const cz = ((wz - gridMinZ) / gridCell) | 0;
-  if (cx < 0 || cz < 0 || cx >= gridW || cz >= gridH) return false;
-  return roadMask[cz * gridW + cx] === 1;
+  const t = builtTileAt(wx, wz);
+  if (!t || !t.roadMask) return false;
+  const cx = ((wx - t.gMinX) / gridCell) | 0;
+  const cz = ((wz - t.gMinZ) / gridCell) | 0;
+  if (cx < 0 || cz < 0 || cx >= t.gW || cz >= t.gH) return false;
+  return t.roadMask[cz * t.gW + cx] === 1;
 }
 // ---- height-aware crash walls: bridge rails + highway barriers ----
 // Thin wall SEGMENTS the car can't cross, bucketed in a spatial hash for cheap per-frame
@@ -227,35 +228,61 @@ function pointInPoly(px, pz, poly) {
 }
 
 //----------------------------------------------------------------------------
-// Road graph (for spawn + NPC traffic)
+// Road graph (for spawn + NPC traffic) — rebuilt from the tiles currently in the
+// scene whenever the ring changes. Tile road lines are cut EXACTLY at the tile
+// boundary, so both sides share the cut point -> same node key -> the graph is
+// connected across tiles.
 //----------------------------------------------------------------------------
 let roadNodes = [];
-function buildGraph(roadPolys) {
+let _graphKey = null;   // node lookup by rounded coords, for NPC re-anchoring
+function rebuildGraph(liveTiles) {
   const nodeMap = new Map();
   const key = (x, z) => Math.round(x) + '_' + Math.round(z);
   function node(x, z) { const k = key(x, z); let n = nodeMap.get(k); if (!n) { n = { x, z, nb: [] }; nodeMap.set(k, n); } return n; }
-  for (const poly of roadPolys) {
+  for (const t of liveTiles) for (const poly of t.roadLines) {
     for (let i = 0; i < poly.length - 1; i++) {
       const a = node(poly[i].x, poly[i].z), b = node(poly[i+1].x, poly[i+1].z);
       if (a !== b) { if (!a.nb.includes(b)) a.nb.push(b); if (!b.nb.includes(a)) b.nb.push(a); }
     }
   }
   roadNodes = [...nodeMap.values()].filter(n => n.nb.length > 0);
+  _graphKey = nodeMap;
+  reanchorNPCs();
+}
+// After a graph rebuild every node object is new — point each NPC back at the
+// node with its old coordinates, or respawn it if its road left the scene.
+function reanchorNPCs() {
+  if (!_graphKey || !NPCS.length) return;
+  const key = (x, z) => Math.round(x) + '_' + Math.round(z);
+  const find = (n) => { const m = _graphKey.get(key(n.x, n.z)); return (m && m.nb.length) ? m : null; };
+  for (const n of NPCS) {
+    const from = find(n.from), to = find(n.to);
+    if (from && to) { n.from = from; n.to = to; continue; }
+    if (from) { n.from = from; n.to = from.nb[(Math.random() * from.nb.length) | 0]; n.x = from.x; n.z = from.z; continue; }
+    // road is gone: respawn on a random live node
+    if (roadNodes.length) {
+      const f = roadNodes[(Math.random() * roadNodes.length) | 0];
+      n.from = f; n.to = f.nb[(Math.random() * f.nb.length) | 0] || f;
+      n.x = f.x; n.z = f.z; n.ang = Math.atan2(n.to.z - f.z, n.to.x - f.x);
+    }
+  }
 }
 
 //----------------------------------------------------------------------------
-// NPC traffic
+// NPC traffic — meshes live in a persistent scene-level group (NOT a tile group),
+// so traffic survives tiles streaming in and out around it.
 //----------------------------------------------------------------------------
 let NPCS = [];
+const npcGroup = new THREE.Group();
+scene.add(npcGroup);
 function spawnNPCs(count) {
-  NPCS = [];
   if (roadNodes.length < 2) return;
-  for (let i = 0; i < count; i++) {
+  for (let i = NPCS.length; i < count; i++) {
     const from = roadNodes[(Math.random() * roadNodes.length) | 0];
     if (!from.nb.length) continue;
     const to = from.nb[(Math.random() * from.nb.length) | 0];
     const col = CARS[(Math.random() * CARS.length) | 0].body;
-    const mesh = makeCarMesh(col); worldGroup.add(mesh);
+    const mesh = makeCarMesh(col); npcGroup.add(mesh);
     NPCS.push({ x: from.x, z: from.z, from, to, ang: Math.atan2(to.z - from.z, to.x - from.x),
       speed: 7 + Math.random() * 6, mesh });
   }

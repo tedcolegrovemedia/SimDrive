@@ -281,14 +281,27 @@ let terrain = () => 0;
 // The GROUND MESH renders flat triangles between its grid vertices, which can rise above the
 // smooth terrain() DEM on curves. Roads/sidewalks/etc. must ride on the MESH surface (linear
 // interp over the same grid) + an offset, so the ground can never poke through them.
-let groundSize = 1, groundSeg = 1;
+// The grid is GLOBAL: cells sit at multiples of GCELL (tiles.js), and every tile's ground
+// plane puts its vertices on that same lattice — so this matches the mesh in every tile.
+// terrain() memoized at lattice points: tile builds hit the same ~8k corners millions of
+// times (sidewalk SDF, ribbons, scatter), and Mercator sampling is trig-heavy. Cleared on
+// a new area (clearWorld) — heights depend on the world origin.
+let _terrCache = new Map();
+function _terrAt(gi, gj) {
+  const k = gi * 131072 + gj;              // unique while |gj| < 65536 (~26,000 km — plenty)
+  let v = _terrCache.get(k);
+  if (v === undefined) {
+    if (_terrCache.size > 400000) _terrCache.clear();   // roaming cap (~3 MB per 100k entries)
+    v = terrain(gi * GCELL, gj * GCELL);
+    _terrCache.set(k, v);
+  }
+  return v;
+}
 function surfaceHeight(x, z) {
-  const cell = groundSize / groundSeg, half = groundSize / 2;
-  let gi = Math.floor((x + half) / cell), gj = Math.floor((z + half) / cell);
-  gi = Math.max(0, Math.min(groundSeg - 1, gi)); gj = Math.max(0, Math.min(groundSeg - 1, gj));
-  const x0 = -half + gi*cell, z0 = -half + gj*cell;
-  const h00 = terrain(x0, z0), h10 = terrain(x0 + cell, z0), h01 = terrain(x0, z0 + cell), h11 = terrain(x0 + cell, z0 + cell);
-  // clamp to the cell so points past the world edge don't EXTRAPOLATE the planes into the sky
+  const cell = GCELL;
+  const gi = Math.floor(x / cell), gj = Math.floor(z / cell);
+  const x0 = gi*cell, z0 = gj*cell;
+  const h00 = _terrAt(gi, gj), h10 = _terrAt(gi+1, gj), h01 = _terrAt(gi, gj+1), h11 = _terrAt(gi+1, gj+1);
   const fx = Math.max(0, Math.min(1, (x - x0) / cell)), fz = Math.max(0, Math.min(1, (z - z0) / cell));
   // Planar interpolation for whichever triangle the point falls in, for BOTH diagonal splits;
   // take the higher. This keeps the road/sidewalk surface from ever dipping below the

@@ -14,11 +14,11 @@
 <div id="start">
   <div id="map"><div class="crosshair"></div></div>
   <div id="panel">
-    <div class="sub">Pan/search to a place, set a radius, then drive the real streets. Data: OpenStreetMap.</div>
+    <div class="sub">Pan/search to a place, then drive the real streets — the world streams in as you go. Data: OpenStreetMap.</div>
     <h1>Sim-Drive</h1>
     <input id="search" placeholder="Search a place (e.g. Chicago Loop, Eiffel Tower)…" />
     <button id="geoBtn">⌖ My location</button>
-    <div class="rad-group" id="radGroup">
+    <div class="rad-group" id="radGroup" style="display:none"><!-- radius picker retired: the world streams as you drive -->
       <div class="rad" data-r="0.3">0.3 mi</div>
       <div class="rad sel" data-r="0.5">0.5 mi</div>
       <div class="rad" data-r="0.75">0.75 mi</div>
@@ -90,6 +90,6 @@
   "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
 } }
 </script>
-<script type="module" src="js/bootstrap.js?v=5"></script><!-- bump ?v whenever bootstrap.js changes (it's edge-cached) -->
+<script type="module" src="js/bootstrap.js?v=6"></script><!-- bump ?v whenever bootstrap.js changes (it's edge-cached) -->
 </body>
 </html>

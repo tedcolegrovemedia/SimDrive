@@ -1,9 +1,17 @@
 # Sim-Drive
 
-Drive real-world streets in 3D, in the browser. Pick a place on the map, choose a radius,
-and Sim-Drive pulls the actual streets, buildings, water, parks, traffic signals and terrain
-from OpenStreetMap / Overture / AWS elevation tiles and assembles a drivable little city —
-with moving traffic, bridges, a car-nav minimap, and a Maxis-style loading screen.
+Drive real-world streets in 3D, in the browser. Pick a place on the map and Sim-Drive pulls
+the actual streets, buildings, water, parks, traffic signals and terrain from OpenStreetMap /
+Overture / AWS elevation tiles and assembles a drivable city — with moving traffic, bridges,
+a car-nav minimap, and a Maxis-style loading screen.
+
+**The world streams as you drive.** The map is an endless grid of half-mile tiles on a fixed
+world origin (`js/tiles.js`): the starting tile builds on the loading screen, then a ring of
+tiles around the car is fetched and built in the background — time-sliced through a generator
+so driving never hitches — with prefetch biased toward your heading. Tiles that fall behind
+are kept in an LRU cache (instant re-add when you drive back) and disposed past a cap; all
+data (OSM, Overture, elevation) is IndexedDB-cached so revisiting never re-downloads. The
+unbuilt frontier is an invisible wall that opens as tiles land.
 
 ## Run
 
@@ -26,15 +34,17 @@ scss/                   source styles — partials + main.scss
 js/
   bootstrap.js          (ES module) loads THREE, then the classic scripts in order
   data.js               OpenStreetMap / Overture data layer + IndexedDB caches
-  picker.js             Leaflet location picker (search, radius, preview)
+  picker.js             Leaflet location picker (search, start-tile preview)
   scene.js              Three.js scene/camera/renderer + shared textures & geometry
+  tiles.js              streaming tile manager: origin, elevation store, fetch pipeline,
+                        budgeted background builds, scene ring + LRU disposal
   world.js              trees, houses, sidewalks, signs, traffic signals, bridges
   vehicles.js           player + NPC cars, dashboard gauges, collision, traffic
-  build-world.js        buildWorld() — assembles the city from OSM data
-  minimap.js            heading-up car-nav minimap
+  build-world.js        buildTileSteps() — assembles ONE tile of city from OSM data
+  minimap.js            heading-up car-nav minimap (redrawn from live tiles)
   loading-phrases.js    Maxis-style loading flavour text
   loading.js            loading-screen controller (progress bar + flavour text)
-  load-area.js          elevation + Overpass fetch, loadArea() orchestration
+  load-area.js          Overpass fetch + loadArea() orchestration (first tile, spawn)
   main.js               input, driving physics, camera, render loop, resume
 ```
 

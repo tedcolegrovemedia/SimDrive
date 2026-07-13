@@ -15,7 +15,7 @@ const TREE_SPECIES = [
   { geo: () => _coniferGeo,   cols: CONIFER_COLS,  offY: 4.1, shadowR: 2.1 },
   { geo: () => _columnarGeo,  cols: COLUMNAR_COLS, offY: 4.5, shadowR: 1.3 },
 ];
-function buildTrees(treePoints, treedPolys, scrubPolys, yardBushPts) {
+function buildTrees(treePoints, treedPolys, scrubPolys, yardBushPts, group) {
   // mapped/wild trees lean deciduous; points may carry their own species (sp) and
   // height scale (sc) — orchard grids use that for small uniform planted trees
   const pts = treePoints.map(p => ({ x: p.x, z: p.z, sc: p.sc,
@@ -32,7 +32,7 @@ function buildTrees(treePoints, treedPolys, scrubPolys, yardBushPts) {
         const jx = x + (Math.random()-0.5)*step, jz = z + (Math.random()-0.5)*step;
         if (pointInPoly(jx, jz, poly))
           pts.push({ x: jx, z: jz, sp: Math.random() < coniferBias ? 1 : (Math.random() < 0.06 ? 2 : 0) });
-        if (pts.length >= 4500) break outer;   // headroom: countryside scatter shares the budget now
+        if (pts.length >= 1500) break outer;   // per-tile cap (countryside scatter shares the budget)
       }
     }
   }
@@ -68,10 +68,10 @@ function buildTrees(treePoints, treedPolys, scrubPolys, yardBushPts) {
       // all the trees vanish whenever the map origin is off-screen.
       leaves.frustumCulled = false;
       // foliage doesn't cast shadows — keeps the shadow pass cheap on old GPUs with thousands of trees
-      worldGroup.add(leaves);
+      group.add(leaves);
     });
     trunks.instanceMatrix.needsUpdate = true; trunks.frustumCulled = false;
-    worldGroup.add(trunks);
+    group.add(trunks);
   }
 
   // bushes: OSM scrub polygons (denser, smaller scatter than woods) + house front yards
@@ -85,7 +85,7 @@ function buildTrees(treePoints, treedPolys, scrubPolys, yardBushPts) {
       for (let z = minZ; z < maxZ; z += step) {
         const jx = x + (Math.random()-0.5)*step, jz = z + (Math.random()-0.5)*step;
         if (pointInPoly(jx, jz, poly)) bushPts.push({ x: jx, z: jz });
-        if (bushPts.length >= 3000) break outerB;
+        if (bushPts.length >= 1000) break outerB;
       }
     }
   }
@@ -105,7 +105,7 @@ function buildTrees(treePoints, treedPolys, scrubPolys, yardBushPts) {
     bushes.instanceMatrix.needsUpdate = true;
     if (bushes.instanceColor) bushes.instanceColor.needsUpdate = true;
     bushes.frustumCulled = false;
-    worldGroup.add(bushes);
+    group.add(bushes);
   }
 
   if (shadows.length) {
@@ -121,14 +121,14 @@ function buildTrees(treePoints, treedPolys, scrubPolys, yardBushPts) {
     }
     blobs.instanceMatrix.needsUpdate = true;
     blobs.frustumCulled = false;
-    worldGroup.add(blobs);
+    group.add(blobs);
   }
 }
 
 // Countryside props: instanced boulders + wildflower patches for the open-land scatter.
 const ROCK_COLS = [0x8d8a84, 0x7c7a76, 0x9a968e, 0x6f6d6a];
 const FLOWER_COLS = [0xd66a8e, 0xe8d05a, 0xf2f0e8, 0xb07ad0, 0xe09a4a];
-function buildCountryProps(rockPts, flowerPts) {
+function buildCountryProps(rockPts, flowerPts, group) {
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), col = new THREE.Color();
   const e = new THREE.Euler(), s = new THREE.Vector3();
   if (rockPts.length) {
@@ -144,7 +144,7 @@ function buildCountryProps(rockPts, flowerPts) {
     rocks.instanceMatrix.needsUpdate = true;
     if (rocks.instanceColor) rocks.instanceColor.needsUpdate = true;
     rocks.frustumCulled = false;                 // instanced meshes cull against the origin — see buildTrees
-    worldGroup.add(rocks);
+    group.add(rocks);
   }
   if (flowerPts.length) {
     // each scatter point becomes a little patch of 3-6 coloured blobs
@@ -167,7 +167,7 @@ function buildCountryProps(rockPts, flowerPts) {
     flowers.instanceMatrix.needsUpdate = true;
     if (flowers.instanceColor) flowers.instanceColor.needsUpdate = true;
     flowers.frustumCulled = false;
-    worldGroup.add(flowers);
+    group.add(flowers);
   }
 }
 
@@ -180,7 +180,9 @@ const _houseRoofGeo = new THREE.ConeGeometry(0.72, 1, 4);
 const _houseChimGeo = new THREE.BoxGeometry(1, 1, 1);
 const CHIM_PAL = [0x9a5f4a, 0x8d8d90, 0x7d6a5c];   // brick / concrete / stone chimneys
 // Returns front-yard bush points for buildTrees to render (foundation plantings).
-function buildHouses(residentialPolys, buildingPolys, roadLines) {
+// inTile keeps placement deterministic across tiles: both neighbours see the same
+// roads (margin overlap) but only the tile CONTAINING a house builds it.
+function buildHouses(residentialPolys, buildingPolys, roadLines, inTile, group) {
   if (!residentialPolys.length || !roadLines.length) return [];
   const CELL = 13, SET = 9.5, SPACING = 18;
   const occ = new Set(), ckey = (x, z) => Math.round(x/CELL) + '_' + Math.round(z/CELL);
@@ -191,14 +193,14 @@ function buildHouses(residentialPolys, buildingPolys, roadLines) {
   const inRes = (x, z) => { for (const poly of residentialPolys) if (pointInPoly(x, z, poly)) return true; return false; };
   const houses = [];
   for (const line of roadLines) {
-    for (let i = 0; i < line.length - 1 && houses.length < 2600; i++) {
+    for (let i = 0; i < line.length - 1 && houses.length < 900; i++) {
       const a = line[i], b = line[i+1], dx = b.x - a.x, dz = b.z - a.z, len = Math.hypot(dx, dz);
       if (len < 5) continue;
       const ux = dx/len, uz = dz/len, px = -uz, pz = ux, ang = Math.atan2(uz, ux);
       for (let d = SPACING*0.5; d < len; d += SPACING) {
         for (const side of [1, -1]) {
           const hx = a.x + ux*d + px*side*SET, hz = a.z + uz*d + pz*side*SET, k = ckey(hx, hz);
-          if (occ.has(k) || !inRes(hx, hz)) continue;
+          if (!inTile(hx, hz) || occ.has(k) || !inRes(hx, hz)) continue;
           occ.add(k); houses.push({ x: hx, z: hz, ang, fx: -px*side, fz: -pz*side }); // f = toward the road (front yard)
         }
       }
@@ -245,14 +247,14 @@ function buildHouses(residentialPolys, buildingPolys, roadLines) {
   if (roofs.instanceColor) roofs.instanceColor.needsUpdate = true;
   bodies.castShadow = roofs.castShadow = true;
   bodies.frustumCulled = roofs.frustumCulled = false;
-  worldGroup.add(bodies, roofs);
+  group.add(bodies, roofs);
   if (chims.length) {
     const chim = new THREE.InstancedMesh(_houseChimGeo, new THREE.MeshLambertMaterial(), chims.length);
     chims.forEach((cc, j) => { chim.setMatrixAt(j, cc.mat); chim.setColorAt(j, col.set(cc.c)); });
     chim.instanceMatrix.needsUpdate = true;
     if (chim.instanceColor) chim.instanceColor.needsUpdate = true;
     chim.castShadow = true; chim.frustumCulled = false;
-    worldGroup.add(chim);
+    group.add(chim);
   }
   return yardBushes;
 }
@@ -265,12 +267,33 @@ function buildHouses(residentialPolys, buildingPolys, roadLines) {
 // nothing can spike, overlap or fragment. A short vertical curb face is dropped along the sdf=0 line.
 // skipAt(x,z) (optional) suppresses cells — used for parking lots, where a road must FLOW into
 // the pavement instead of being capped by a sidewalk strip across the entrance.
-function buildSidewalks(roads, gsz, waterYAt, skipAt) {
-  const W = 1.7, cell = 0.6, minX = -gsz/2, minZ = -gsz/2;
-  const nx = Math.ceil(gsz/cell)+1, nz = Math.ceil(gsz/cell)+1;
+// Generator (yields between heavy passes) building ONE TILE's sidewalk band. The SDF grid is
+// aligned to GLOBAL multiples of `cell` and fed the FULL (unclipped) road set, so adjacent
+// tiles compute identical values along their shared boundary — no seams, no double walks;
+// only cells whose CENTRE lies inside the tile are emitted.
+function* buildSidewalks(roads, tile, waterYAt, skipAt, group) {
+  const W = 1.7, cell = 0.6;
+  const { x0: tx0, z0: tz0, x1: tx1, z1: tz1 } = tile.bounds;
+  const i0 = Math.floor(tx0 / cell) - 1, j0 = Math.floor(tz0 / cell) - 1;
+  const nx = Math.ceil(tx1 / cell) + 2 - i0, nz = Math.ceil(tz1 / cell) + 2 - j0;
+  const minX = i0 * cell, minZ = j0 * cell;
   const sdf = new Float32Array(nx*nz).fill(1e9);
+  // Prefilter + densify: skip roads that can't reach this tile, and cut long straight
+  // segments to ~24 m so each segment's cell scan stays a small bbox (a single raw
+  // kilometre-long OSM segment would otherwise scan most of the grid).
+  const maxReach = 8 + W + cell;
+  const nearTile = (pts) => {
+    for (const p of pts) if (p.x > tx0 - maxReach && p.x < tx1 + maxReach && p.z > tz0 - maxReach && p.z < tz1 + maxReach) return true;
+    return false;
+  };
+  const walkRoads = [];
   for (const r of roads) {
-    if (r.bridge || r.pts.length < 2) continue;
+    if (r.bridge || r.pts.length < 2 || !nearTile(r.pts)) continue;
+    walkRoads.push({ w: r.w, pts: densify(r.pts, 24) });
+  }
+  // NOTE: the hot loops live in plain inner functions, NOT directly in the generator
+  // body — V8 heap-allocates a generator's locals, which made these loops ~15x slower.
+  const fillRoad = (r) => {
     const hw = r.w/2, reach = hw + W + cell;
     for (let i = 0; i < r.pts.length-1; i++) {
       const a = r.pts[i], b = r.pts[i+1], dx = b.x-a.x, dz = b.z-a.z, l2 = dx*dx+dz*dz || 1;
@@ -283,13 +306,17 @@ function buildSidewalks(roads, gsz, waterYAt, skipAt) {
         if (d < sdf[k]) sdf[k] = d;
       }
     }
+  };
+  let rI = 0;
+  for (const r of walkRoads) {
+    if (++rI % 60 === 0) yield 'sidewalks';
+    fillRoad(r);
   }
   // For texture UVs that FOLLOW the walk (not a fixed world grid): bucket road segments with their
   // cumulative arc-length; per vertex, the nearest road gives u = distance ALONG it, v = distance
   // ACROSS it, so panel joints run with/across the sidewalk and curve with it.
   const PANEL = 1.5, sCell = 8, sgrid = new Map(), rsegs = [];
-  for (const r of roads) {
-    if (r.bridge || r.pts.length < 2) continue;
+  for (const r of walkRoads) {
     const hw = r.w/2; let cum = 0;
     for (let i = 0; i < r.pts.length-1; i++) {
       const a = r.pts[i], b = r.pts[i+1], dx = b.x-a.x, dz = b.z-a.z, len = Math.hypot(dx,dz)||1e-6;
@@ -322,30 +349,39 @@ function buildSidewalks(roads, gsz, waterYAt, skipAt) {
     }
     return out;
   };
-  for (let iz = 0; iz < nz-1; iz++) for (let ix = 0; ix < nx-1; ix++) {
-    const s00=sdf[iz*nx+ix], s10=sdf[iz*nx+ix+1], s11=sdf[(iz+1)*nx+ix+1], s01=sdf[(iz+1)*nx+ix];
-    if (Math.min(s00,s10,s11,s01) > W || Math.max(s00,s10,s11,s01) < 0) continue;
-    const x0 = minX+ix*cell, z0 = minZ+iz*cell, x1 = x0+cell, z1 = z0+cell;
-    if (skipAt && skipAt(x0 + cell/2, z0 + cell/2)) continue;   // e.g. inside a parking lot
-    let poly = [{x:x0,z:z0,s:s00},{x:x1,z:z0,s:s10},{x:x1,z:z1,s:s11},{x:x0,z:z1,s:s01}];
-    poly = clip(poly, true, 0); if (poly.length>=3) poly = clip(poly, false, W);
-    if (poly.length < 3) continue;
-    const puv = poly.map(p => uvAt(p.x, p.z));       // panel UVs follow the nearest road
-    for (let m = 1; m < poly.length-1; m++) {        // concrete top (fan-triangulate the clipped cell)
-      const A=poly[0], B=poly[m], C=poly[m+1], a=puv[0], b=puv[m], c=puv[m+1];
-      top.push(A.x,yTop(A.x,A.z),A.z, B.x,yTop(B.x,B.z),B.z, C.x,yTop(C.x,C.z),C.z);
-      topUV.push(a[0],a[1], b[0],b[1], c[0],c[1]);
-    }
-    for (let m = 0; m < poly.length; m++) {          // vertical curb face on edges lying on sdf=0
-      const A=poly[m], B=poly[(m+1)%poly.length];
-      if (Math.abs(A.s)<1e-3 && Math.abs(B.s)<1e-3) {
-        const ya=yTop(A.x,A.z), yb=yTop(B.x,B.z);
-        curb.push(A.x,ya,A.z, B.x,yb,B.z, B.x,yb-0.13,B.z,  A.x,ya,A.z, B.x,yb-0.13,B.z, A.x,ya-0.13,A.z);
+  const emitRows = (izA, izB) => {
+    for (let iz = izA; iz < izB; iz++) for (let ix = 0; ix < nx-1; ix++) {
+      const s00=sdf[iz*nx+ix], s10=sdf[iz*nx+ix+1], s11=sdf[(iz+1)*nx+ix+1], s01=sdf[(iz+1)*nx+ix];
+      if (Math.min(s00,s10,s11,s01) > W || Math.max(s00,s10,s11,s01) < 0) continue;
+      const x0 = minX+ix*cell, z0 = minZ+iz*cell, x1 = x0+cell, z1 = z0+cell;
+      const ccx = x0 + cell/2, ccz = z0 + cell/2;
+      if (ccx < tx0 || ccx >= tx1 || ccz < tz0 || ccz >= tz1) continue;   // owned by a neighbour tile
+      if (skipAt && skipAt(ccx, ccz)) continue;   // e.g. inside a parking lot
+      let poly = [{x:x0,z:z0,s:s00},{x:x1,z:z0,s:s10},{x:x1,z:z1,s:s11},{x:x0,z:z1,s:s01}];
+      poly = clip(poly, true, 0); if (poly.length>=3) poly = clip(poly, false, W);
+      if (poly.length < 3) continue;
+      const puv = poly.map(p => uvAt(p.x, p.z));       // panel UVs follow the nearest road
+      const py = poly.map(p => yTop(p.x, p.z));        // heights ONCE per vertex (yTop is terrain-sampling hot)
+      for (let m = 1; m < poly.length-1; m++) {        // concrete top (fan-triangulate the clipped cell)
+        const A=poly[0], B=poly[m], C=poly[m+1], a=puv[0], b=puv[m], c=puv[m+1];
+        top.push(A.x,py[0],A.z, B.x,py[m],B.z, C.x,py[m+1],C.z);
+        topUV.push(a[0],a[1], b[0],b[1], c[0],c[1]);
+      }
+      for (let m = 0; m < poly.length; m++) {          // vertical curb face on edges lying on sdf=0
+        const A=poly[m], B=poly[(m+1)%poly.length], mn = (m+1)%poly.length;
+        if (Math.abs(A.s)<1e-3 && Math.abs(B.s)<1e-3) {
+          const ya=py[m], yb=py[mn];
+          curb.push(A.x,ya,A.z, B.x,yb,B.z, B.x,yb-0.13,B.z,  A.x,ya,A.z, B.x,yb-0.13,B.z, A.x,ya-0.13,A.z);
+        }
       }
     }
+  };
+  for (let iz = 0; iz < nz-1; iz += 160) {
+    emitRows(iz, Math.min(iz + 160, nz-1));
+    yield 'sidewalks';
   }
-  if (top.length) { const m = texMesh(top, concreteTex, 0, 0xffffff, false, topUV); m.material.side = THREE.DoubleSide; worldGroup.add(m); }
-  if (curb.length) { const m = flatMesh(curb, 0xa8a8a4, false); m.material.side = THREE.DoubleSide; worldGroup.add(m); }
+  if (top.length) { const m = texMesh(top, concreteTex, 0, 0xffffff, false, topUV); m.material.side = THREE.DoubleSide; group.add(m); }
+  if (curb.length) { const m = flatMesh(curb, 0xa8a8a4, false); m.material.side = THREE.DoubleSide; group.add(m); }
 }
 
 // direction (unit vector) of the road nearest to (x,z)
@@ -458,7 +494,9 @@ function reserveSignSpot(x, z, adx, adz, roads, minGap = 2.4) {
 }
 
 // ---- Live traffic signals ----
-let signals = [], signalLamps = null, signalTime = 0;
+// signalSets = per-tile { list, lamps } (rebuilt by refreshRegistries from the scene
+// tiles); `signals` is the flat list every NPC red-light check scans.
+let signals = [], signalSets = [], signalTime = 0;
 const LAMP_ON = [0xff3b30, 0xffcc00, 0x2cd14a];  // red, amber, green (lit)
 const LAMP_OFF = [0x401414, 0x40360f, 0x123a1c];  // dim lenses (unlit)
 // state from group + time: 0 green, 1 amber, 2 red. Groups (road axes) alternate.
@@ -468,24 +506,26 @@ function signalState(group, tSec) {
   return local < GREEN ? 0 : local < HALF ? 1 : 2;
 }
 function applySignalStates(force) {
-  if (!signalLamps) return;
-  const tSec = signalTime / 60; const col = new THREE.Color(); let changed = false;
-  for (const s of signals) {
-    const st = signalState(s.group, tSec);
-    if (st === s.state && !force) continue;
-    s.state = st; changed = true;
-    const active = st === 2 ? 0 : st === 1 ? 1 : 2;   // which lens is lit
-    for (let k = 0; k < 3; k++) signalLamps.setColorAt(s.base + k, col.set(k === active ? LAMP_ON[k] : LAMP_OFF[k]));
+  const tSec = signalTime / 60; const col = new THREE.Color();
+  for (const set of signalSets) {
+    let changed = false;
+    for (const s of set.list) {
+      const st = signalState(s.group, tSec);
+      if (st === s.state && !force) continue;
+      s.state = st; changed = true;
+      const active = st === 2 ? 0 : st === 1 ? 1 : 2;   // which lens is lit
+      for (let k = 0; k < 3; k++) set.lamps.setColorAt(s.base + k, col.set(k === active ? LAMP_ON[k] : LAMP_OFF[k]));
+    }
+    if ((changed || force) && set.lamps.instanceColor) set.lamps.instanceColor.needsUpdate = true;
   }
-  if ((changed || force) && signalLamps.instanceColor) signalLamps.instanceColor.needsUpdate = true;
 }
 function updateSignals(dt) { signalTime += dt; applySignalStates(false); }
 
 // Traffic lights: roadside pole + mast arm OUT over the street, 3-lens head facing traffic.
-function buildTrafficLights(nodes, roads) {
-  signals = []; signalLamps = null;
-  if (!nodes.length) return;
-  const n = Math.min(nodes.length, 150);
+// Returns a per-tile { list, lamps } set (or null); registries merge sets across tiles.
+function buildTrafficLights(nodes, roads, group) {
+  if (!nodes.length) return null;
+  const n = Math.min(nodes.length, 40);
   const poleMat = new THREE.MeshLambertMaterial({ color: 0x2f333a });
   const poles = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.14, 0.16, 6.4, 6), poleMat, n);
   const arms  = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 0.16, 0.16), poleMat, n);   // +X length, scaled
@@ -493,6 +533,7 @@ function buildTrafficLights(nodes, roads) {
   const lamps = new THREE.InstancedMesh(new THREE.SphereGeometry(0.16, 10, 8), new THREE.MeshBasicMaterial(), n*3);
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), pos = new THREE.Vector3(), scl = new THREE.Vector3();
   const UP = new THREE.Vector3(0, 1, 0), ONE = new THREE.Vector3(1, 1, 1);
+  const list = [];
   for (let i = 0; i < n; i++) {
     const p = nodes[i], J = junctionAt(p.x, p.z, roads), A = J.A;
     const dx = A.dir[0], dz = A.dir[1], hw = A.hw;
@@ -520,13 +561,22 @@ function buildTrafficLights(nodes, roads) {
     m.makeTranslation(hx + fx, hy + 0.46, hz + fz); lamps.setMatrixAt(base + 0, m);
     m.makeTranslation(hx + fx, hy,        hz + fz); lamps.setMatrixAt(base + 1, m);
     m.makeTranslation(hx + fx, hy - 0.46, hz + fz); lamps.setMatrixAt(base + 2, m);
-    const group = Math.abs(dx) >= Math.abs(dz) ? 0 : 1;   // cross streets alternate
-    signals.push({ x: p.x, z: p.z, dir: [dx, dz], group, base, state: -1 });
+    const grp = Math.abs(dx) >= Math.abs(dz) ? 0 : 1;   // cross streets alternate
+    list.push({ x: p.x, z: p.z, dir: [dx, dz], group: grp, base, state: -1 });
   }
   poles.instanceMatrix.needsUpdate = arms.instanceMatrix.needsUpdate = heads.instanceMatrix.needsUpdate = lamps.instanceMatrix.needsUpdate = true;
   poles.frustumCulled = arms.frustumCulled = heads.frustumCulled = lamps.frustumCulled = false;
-  worldGroup.add(poles, arms, heads, lamps);
-  signalLamps = lamps; signalTime = 0; applySignalStates(true);
+  group.add(poles, arms, heads, lamps);
+  // paint this set's initial lens colours (the global clock keeps ticking across tiles)
+  const set = { list, lamps };
+  const tSec = signalTime / 60, col = new THREE.Color();
+  for (const s of list) {
+    const st = signalState(s.group, tSec); s.state = st;
+    const active = st === 2 ? 0 : st === 1 ? 1 : 2;
+    for (let k = 0; k < 3; k++) lamps.setColorAt(s.base + k, col.set(k === active ? LAMP_ON[k] : LAMP_OFF[k]));
+  }
+  if (lamps.instanceColor) lamps.instanceColor.needsUpdate = true;
+  return set;
 }
 
 function makeSignTexture(draw) {
@@ -536,9 +586,9 @@ function makeSignTexture(draw) {
 }
 // Stop signs: pole BEHIND the sign; STOP on the front face only (facing traffic),
 // plain grey back (no mirrored text). Offset to the roadside.
-function buildStopSigns(nodes, roads) {
+function buildStopSigns(nodes, roads, group) {
   if (!nodes.length) return;
-  const n = Math.min(nodes.length, 150);
+  const n = Math.min(nodes.length, 40);
   const octPath = g => { g.beginPath(); for (let i = 0; i < 8; i++) { const a = Math.PI/8 + i*Math.PI/4, x = 128 + Math.cos(a)*118, y = 128 + Math.sin(a)*118; i ? g.lineTo(x, y) : g.moveTo(x, y); } g.closePath(); };
   const frontTex = makeSignTexture(g => {
     g.clearRect(0, 0, 256, 256); octPath(g);
@@ -582,12 +632,14 @@ function buildStopSigns(nodes, roads) {
   }
   poles.instanceMatrix.needsUpdate = fronts.instanceMatrix.needsUpdate = backs.instanceMatrix.needsUpdate = true;
   poles.frustumCulled = fronts.frustumCulled = backs.frustumCulled = false;
-  worldGroup.add(poles, fronts, backs);
+  group.add(poles, fronts, backs);
 }
 
-// Green street-name signs (one per unique road name, capped), oriented along the road.
-function buildStreetSigns(roadPolys) {
-  const seen = new Set(); let count = 0; const cap = 60;
+// Green street-name signs (one per unique road name per tile, capped), oriented along
+// the road. Only plants blades whose corner lands inside this tile (a long road gets
+// one sign per tile it crosses — which reads as real street signage anyway).
+function buildStreetSigns(roadPolys, inTile, group) {
+  const seen = new Set(); let count = 0; const cap = 12;
   const poleGeo = new THREE.CylinderGeometry(0.05, 0.05, 3.3, 6), poleMat = new THREE.MeshLambertMaterial({ color: 0x8a8a8a });
   const plateGeo = new THREE.PlaneGeometry(3.0, 3.0);
   for (const r of roadPolys) {
@@ -613,6 +665,7 @@ function buildStreetSigns(roadPolys) {
     // nudge clear of stop signs / traffic-light poles already on this corner (steps into the approach)
     const spot = reserveSignSpot(snapped.x, snapped.z, dx, dz, roadPolys);
     const polex = spot.x, polez = spot.z, gy = terrain(polex, polez);
+    if (!inTile(polex, polez)) continue;   // corner belongs to a neighbour tile
     // mount the blade so the POLE sits at its left edge (not through the middle)
     const bx = polex + dx*1.35, bz = polez + dz*1.35;
     // auto-fit font so the full name has padding and never touches the sides
@@ -635,7 +688,7 @@ function buildStreetSigns(roadPolys) {
     front.position.set(bx + nx*0.06, gy + 2.8, bz + nz*0.06); front.rotation.y = ang;
     const back = new THREE.Mesh(plateGeo, mat);
     back.position.set(bx - nx*0.06, gy + 2.8, bz - nz*0.06); back.rotation.y = ang + Math.PI;
-    worldGroup.add(pole, front, back);
+    group.add(pole, front, back);
     count++;
   }
 }

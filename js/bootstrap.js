@@ -8,7 +8,7 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 Object.assign(window, { THREE, mergeGeometries, RoundedBoxGeometry });
 
 const FILES = [
-  'js/data.js', 'js/picker.js', 'js/scene.js', 'js/world.js', 'js/vehicles.js',
+  'js/data.js', 'js/picker.js', 'js/scene.js', 'js/tiles.js', 'js/world.js', 'js/vehicles.js',
   'js/build-world.js', 'js/minimap.js', 'js/loading-phrases.js', 'js/loading.js',
   'js/load-area.js', 'js/spotify.js', 'js/audio.js', 'js/main.js',
 ];

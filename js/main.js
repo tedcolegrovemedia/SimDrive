@@ -155,6 +155,7 @@ function loop(now) {
   if (dt > 4) dt = 4; if (dt <= 0) dt = 1;
   updateAudio();   // engine follows speed/throttle; radio scheduler runs even in the picker
   if (worldReady) {
+    pumpTiles();     // stream tiles around the car: fetch ring, budgeted builds, registries
     updateSignals(dt); updatePlayer(dt); updateNPCs(dt); updateCamera(); updateGear();
     skyDome.position.copy(camera.position);   // sky stays centred on the camera
     const wt = now * 0.001;                    // drift the water ripple texture — cheap "alive" motion
@@ -180,6 +181,10 @@ addEventListener('visibilitychange', () => { if (document.visibilityState === 'h
 
 resize();
 requestAnimationFrame(loop);
+// Keep tiles streaming while the tab is hidden: rAF (and the game) pause, but a
+// timer still fires ~1/s in background tabs — enough to keep fetches and builds
+// moving so the world is ready when the player comes back.
+setInterval(() => { if (worldReady && document.visibilityState === 'hidden') pumpTilesHidden(); }, 400);
 
 window.__loadArea = loadArea;   // debug: load an exact lat/lon/radius
 // ---- resume the last session on load: skip the picker and rebuild that area at the saved spot ----

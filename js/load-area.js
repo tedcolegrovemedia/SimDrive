@@ -1,71 +1,14 @@
 // SimDrive — load-area.js
-// elevation + Overpass fetch, loadArea() orchestration, start-driving, top buttons
+// loadArea() orchestration for the STREAMING world: set the fixed origin, build the
+// centre tile on the loading screen, start driving, and let tiles.js stream the rest.
+// Also: Overpass fetch (shared with background tile loads), start-driving, top buttons.
 // Loaded as a classic script by js/bootstrap.js; all app files share one global
 // scope (the original single-file behaviour), with THREE/addons exposed as globals.
 
-// Fetch real terrain from AWS Terrarium elevation tiles -> returns heightAt(worldX, worldZ).
-// Falls back to flat ground on any failure (CORS, missing tiles, etc).
-const EXAG = 1.0; // real elevation (1.0) — exaggeration deepened river valleys & made bridges/ramps extreme
-async function fetchElevation(lat0, lon0, half) {
-  const flat = () => 0;
-  try {
-    const mPerLat = 111320, mPerLon = 111320 * Math.cos(lat0 * Math.PI/180);
-    const dLat = half/mPerLat, dLon = half/mPerLon;
-    const Z = 14, n2 = Math.pow(2, Z);
-    const lon2tx = lon => (lon + 180)/360 * n2;
-    const lat2ty = lat => { const r = lat*Math.PI/180; return (1 - Math.asinh(Math.tan(r))/Math.PI)/2 * n2; };
-    const txMin = Math.floor(lon2tx(lon0 - dLon)), txMax = Math.floor(lon2tx(lon0 + dLon));
-    const tyMin = Math.floor(lat2ty(lat0 + dLat)), tyMax = Math.floor(lat2ty(lat0 - dLat));
-    const cols = txMax - txMin + 1, rows = tyMax - tyMin + 1;
-    if (cols * rows > 25 || cols < 1 || rows < 1) return flat;
-    const W = cols*256, H = rows*256;
-    // Decoded elevation grid (metres, row-major Float32), cached in IndexedDB keyed by tile
-    // range — same pattern as the OSM/Overture caches — so revisiting an area never re-fetches
-    // or re-decodes the Terrarium PNG tiles. The grid depends only on the tiles; the world
-    // origin (elev0 + projection below) is recomputed per call from lat0/lon0.
-    const gridKey = `elev|${Z}|${txMin},${tyMin},${txMax},${tyMax}`;
-    let grid = await cacheGet(gridKey);
-    if (!grid || grid.length !== W*H) {
-      const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
-      const g = cv.getContext('2d', { willReadFrequently: true });
-      await Promise.all(Array.from({ length: cols*rows }, (_, i) => {
-        const cx = i % cols, cy = (i / cols) | 0;
-        return new Promise(res => {
-          const img = new Image(); img.crossOrigin = 'anonymous';
-          const done = () => { clearTimeout(t); res(); };
-          const t = setTimeout(done, 10000); // don't let a stalled tile hang the build
-          img.onload = () => { try { g.drawImage(img, cx*256, cy*256); } catch(e){} done(); };
-          img.onerror = done;
-          img.src = `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${Z}/${txMin+cx}/${tyMin+cy}.png`;
-        });
-      }));
-      const rgba = g.getImageData(0, 0, W, H).data;
-      grid = new Float32Array(W*H);
-      for (let p = 0; p < W*H; p++) { const o = p*4; grid[p] = (rgba[o]*256 + rgba[o+1] + rgba[o+2]/256) - 32768; }
-      await cacheSet(gridKey, grid);
-      console.log('elevation: fetched + cached', gridKey, `${W}x${H}`);
-    } else { console.log('elevation: cache hit', gridKey); }
-    const elevAt = (gx, gy) => {
-      gx = Math.max(0, Math.min(W-1, gx)); gy = Math.max(0, Math.min(H-1, gy));
-      const x0 = Math.floor(gx), y0 = Math.floor(gy), x1 = Math.min(W-1, x0+1), y1 = Math.min(H-1, y0+1);
-      const fx = gx-x0, fy = gy-y0;
-      const e = (x, y) => grid[y*W+x];
-      const a = e(x0,y0), b = e(x1,y0), c = e(x0,y1), d = e(x1,y1);
-      return (a*(1-fx)+b*fx)*(1-fy) + (c*(1-fx)+d*fx)*fy;
-    };
-    const toGlobal = (wx, wz) => {
-      const lat = lat0 + (-wz)/mPerLat, lon = lon0 + wx/mPerLon;
-      return { gx: lon2tx(lon)*256 - txMin*256, gy: lat2ty(lat)*256 - tyMin*256 };
-    };
-    const c0 = toGlobal(0, 0), elev0 = elevAt(c0.gx, c0.gy);
-    if (!isFinite(elev0) || elev0 < -1000) return flat;
-    return (wx, wz) => { const p = toGlobal(wx, wz); const h = (elevAt(p.gx, p.gy) - elev0) * EXAG;
-      return (!isFinite(h) || Math.abs(h) > 1500) ? 0 : h; };
-  } catch (e) { return () => 0; }
-}
-
 // Overpass is a free shared service that's often busy. Try several mirrors,
 // with one retry each, so a single overloaded server doesn't fail the load.
+// `status(msg)` (optional) reports progress — the loading screen passes a UI
+// updater; background tile fetches pass nothing.
 const OVERPASS_ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
@@ -73,12 +16,12 @@ const OVERPASS_ENDPOINTS = [
   'https://overpass.private.coffee/api/interpreter',
 ];
 const OVERPASS_TIMEOUT = 22000; // give up on a stalled server and try the next one
-async function fetchOverpass(q) {
+async function fetchOverpass(q, status) {
   let lastErr = null;
   for (let attempt = 0; attempt < 2; attempt++) {
     for (let i = 0; i < OVERPASS_ENDPOINTS.length; i++) {
       const url = OVERPASS_ENDPOINTS[i];
-      loadSub.textContent = `Querying map server ${i + 1}/${OVERPASS_ENDPOINTS.length}${attempt ? ' (retry)' : ''}…`;
+      if (status) status(`Querying map server ${i + 1}/${OVERPASS_ENDPOINTS.length}${attempt ? ' (retry)' : ''}…`);
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), OVERPASS_TIMEOUT);
       try {
@@ -103,77 +46,87 @@ async function fetchOverpass(q) {
   throw new Error('All map servers are busy right now (' + (lastErr && lastErr.message) + '). Wait a moment and try again.');
 }
 
+// Loading-bar milestones per build phase (the generator yields phase labels).
+const PHASE_PROGRESS = { ground: 0.72, sort: 0.74, water: 0.77, roads: 0.82, parking: 0.86,
+  sidewalks: 0.88, buildings: 0.92, scatter: 0.95, houses: 0.955, trees: 0.96, signs: 0.97, grid: 0.985 };
+const PHASE_TEXT = { ground: 'Laying terrain', roads: 'Paving streets', sidewalks: 'Pouring sidewalks',
+  buildings: 'Raising buildings', trees: 'Planting trees', grid: 'Painting curbs' };
+
 async function loadArea(lat, lon, rMi) {
   lastLat = lat; lastLon = lon; lastRMi = rMi;   // remember for the resume-on-refresh save
   startEl.style.display = 'none';
   loadingEl.style.display = 'flex';
   loadErr.style.display = 'none'; backBtn.style.display = 'none'; spinEl.style.display = '';
   startLoadingFX();                 // cycling Maxis flavour text + progress bar
-  loadSub.textContent = `${rMi} mile area + surroundings — dense cities take longer.`;
-
-  // Render the REAL map for a skirt beyond the play area so the edge is genuine streets
-  // fading into haze (no fake skyline). The player is fenced into rMi; the skirt is wider
-  // than the fog distance, so the true data edge is never visible. See buildWorld().
-  const SKIRT_MI = 0.5;
-  const renderMi = rMi + SKIRT_MI;
-  const half = renderMi * MILE;
-  const dLat = half / 111320, dLon = half / (111320 * Math.cos(lat * Math.PI/180));
-  const s = lat - dLat, w = lon - dLon, nth = lat + dLat, e = lon + dLon;
-  const bbox = `${s},${w},${nth},${e}`;
-  const q = `[out:json][timeout:90];(` +
-    `way["highway"](${bbox});` +
-    `way["building"](${bbox});` +
-    `way["building:part"](${bbox});` + // Simple-3D-Buildings parts: towers/steeples/wings with own heights+roofs
-    `way["natural"~"water|wood|grassland|scrub"](${bbox});` +
-    `way["water"](${bbox});` +
-    `way["waterway"](${bbox});` +
-    `way["leisure"~"park|garden|pitch|golf_course|playground|recreation_ground"](${bbox});` +
-    `way["landuse"~"grass|forest|meadow|recreation_ground|village_green|cemetery|farmland|orchard|allotments"](${bbox});` +
-    `way["landuse"="residential"](${bbox});` + // residential zones -> fill with houses where OSM has none
-    `way["amenity"="parking"](${bbox});` +   // parking lots -> paved asphalt surface
-    `node["natural"="tree"](${bbox});` +     // individually-mapped trees -> foliage
-    `node["highway"~"traffic_signals|stop"](${bbox});` + // traffic lights & stop signs
-    // big rivers/lakes & many parks are multipolygon relations, not ways:
-    `relation["natural"="water"](${bbox});` +
-    `relation["water"](${bbox});` +
-    `relation["waterway"="riverbank"](${bbox});` +
-    `relation["leisure"="park"](${bbox});` +
-    `relation["landuse"~"grass|forest|meadow|cemetery|residential"](${bbox});` +
-    `relation["amenity"="parking"](${bbox});` +
-    `);out geom;`;
+  loadSub.textContent = 'Starting at your spot — the rest of the world streams in as you drive.';
 
   try {
-    const elevPromise = fetchElevation(lat, lon, half); // runs alongside Overpass
-    // Overpass result is cached per-area so revisiting an area never re-downloads it.
-    // v2: query now also fetches building:part ways (3D roof detail) — old cache entries lack them
-    const osmKey = `osm2|${s.toFixed(4)},${w.toFixed(4)},${nth.toFixed(4)},${e.toFixed(4)}`;
-    let data = await cacheGet(osmKey);
-    if (!data) { data = await fetchOverpass(q); await cacheSet(osmKey, data); }
-    if (!data.elements || !data.elements.length) throw new Error('No map data found here — try a more built-up area.');
-    loadProgress(0.4);                // map data in hand
+    clearWorld();
+    setWorldOrigin(lat, lon);
+    terrain = sampleTerrain;
 
-    // Overture buildings: detailed footprints + real heights, cached in IndexedDB.
-    // Wrapped in a timeout so a slow/stalled DuckDB load can't hang the build — we
-    // just fall back to OSM footprints + procedural houses.
-    let overture = null;
-    try {
-      loadProgress(0.45);             // fetching detailed buildings
-      loadSub.textContent = 'Overture Maps — the first new area also fetches the reader engine.';
-      const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('overture timeout')), ms))]);
-      const ovt = await withTimeout(fetchOvertureBuildings(s, w, nth, e), 45000);
-      overture = ovt.buildings;
-    } catch (e2) { console.warn('Overture unavailable, using OSM buildings:', e2); overture = null; }
+    // elevation for the centre tile + seed the height reference at the origin
+    await ensureElevation(-TILE, -TILE, TILE, TILE);
+    seedElev0();
+    loadProgress(0.15);
 
-    loadProgressSnap(0.8);            // snap to 80% NOW — the build freeze is about to halt easing
-    loadSub.textContent = `${data.elements.length} map features` + (overture && overture.length ? ` · ${overture.length} detailed buildings` : '');
-    const heightAt = await elevPromise;
-    await new Promise(res => setTimeout(res, 30)); // let UI paint
+    // fetch + build the FIRST tile with the loading screen up; neighbours stream in
+    // the background once driving starts. On a refresh-resume that's the tile the
+    // player was parked on (which may not be the origin tile).
+    const t0 = performance.now();
+    const hasResume = restorePos && isFinite(restorePos.x) && isFinite(restorePos.z);
+    const center = hasResume ? getOrCreateTile(tileOf(restorePos.x), tileOf(restorePos.z))
+                             : getOrCreateTile(0, 0);
+    await fetchTileData(center, (stage) => {
+      if (stage === 'elev') loadProgress(0.2);
+      else if (stage === 'osm') loadProgress(0.45);
+      else if (stage === 'ovt') loadProgress(0.7);
+      else loadSub.textContent = stage;                       // Overpass mirror progress text
+    });
+    if (center.state === 'error') throw new Error('Could not fetch map data for this spot.');
+    if (!center.data.elements.length) throw new Error('No map data found here — try a more built-up area.');
+    loadSub.textContent = `${center.data.elements.length} map features` +
+      (center.overture && center.overture.length ? ` · ${center.overture.length} detailed buildings` : '');
 
-    const tBuild = performance.now();
-    buildWorld(data, lat, lon, renderMi, heightAt, overture, rMi);
-    console.log(`buildWorld: ${(performance.now() - tBuild).toFixed(0)} ms (${data.elements.length} features)`);
+    // run the build generator with rAF breathers so the bar keeps animating
+    center.state = 'building';
+    const gen = buildTileSteps(center);
+    let step = 0;
+    for (let r = gen.next(); !r.done; r = gen.next()) {
+      if (PHASE_PROGRESS[r.value]) loadProgress(PHASE_PROGRESS[r.value]);
+      if (PHASE_TEXT[r.value]) loadSub.textContent = PHASE_TEXT[r.value] + '…';
+      // breathe so the progress bar animates — raced with a timeout because rAF
+      // never fires in a hidden tab (loading must finish even in the background)
+      if (++step % 3 === 0) await new Promise(res => { const t = setTimeout(res, 40); requestAnimationFrame(() => { clearTimeout(t); res(); }); });
+    }
+    center.state = 'built';
+    worldGroup.add(center.group); center.inScene = true;
+    console.log(`centre tile: ${(performance.now() - t0).toFixed(0)} ms (${center.data.elements.length} features)`);
+
+    refreshRegistries();     // graph + minimap + signals from the one live tile
+
+    // ---- spawn: resume the saved position on refresh (if it's on the built tile),
+    // else the nearest road node to the origin ----
+    if (hasResume && builtTileAt(restorePos.x, restorePos.z)) {
+      player.x = restorePos.x; player.z = restorePos.z; player.ang = restorePos.ang || 0;
+    } else {
+      const ax = hasResume ? restorePos.x : 0, az = hasResume ? restorePos.z : 0;
+      let best = null, bd = 1e18;
+      for (const nd of roadNodes) { const d = (nd.x-ax)*(nd.x-ax) + (nd.z-az)*(nd.z-az); if (d < bd) { bd = d; best = nd; } }
+      if (best) {
+        player.x = best.x; player.z = best.z;
+        const nb = best.nb[0]; player.ang = nb ? Math.atan2(nb.z - best.z, nb.x - best.x) : 0;
+      } else { player.x = 0; player.z = 0; player.ang = 0; }
+    }
+    restorePos = null;
+    player.speed = 0; player.vy = 0;
+    player.y = driveHeight(player.x, player.z);   // seed the resting level (deck if spawned on a bridge)
+
+    worldReady = true;
+    window.__dbg = { player, get bridges() { return bridges; }, driveHeight, surfaceHeight, terrain, tiles, TILE };
     stopLoadingFX(true);              // snap the bar to 100%, stop the phrase cycler
     startDriving();
+    updateTiles();                    // kick the neighbour fetches immediately
   } catch (err) {
     stopLoadingFX(false);            // halt the cycler so the error message isn't overwritten
     spinEl.style.display = 'none';
@@ -187,7 +140,7 @@ async function loadArea(lat, lon, rMi) {
 backBtn.addEventListener('click', () => { loadingEl.style.display = 'none'; startEl.style.display = 'flex'; map.invalidateSize(); warmDuck(); });
 document.getElementById('newLoc').addEventListener('click', () => {
   try { localStorage.removeItem(SESSION_KEY); } catch (e) {} // deliberately picking a new area -> refresh shows the picker
-  worldReady = false;
+  clearWorld();
   ['topbtns','fps','dashboard','touch'].forEach(id => document.getElementById(id).style.display = 'none');
   document.getElementById('help').classList.add('hidden');
   startEl.style.display = 'flex'; map.invalidateSize(); updatePreview(); warmDuck();

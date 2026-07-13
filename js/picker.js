@@ -19,7 +19,7 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 let previewRect = null;
 function updatePreview() {
   const c = map.getCenter();
-  const half = radiusMi * MILE;
+  const half = MILE * 0.25;   // the starting tile — everything beyond it streams in as you drive
   const dLat = half / 111320;
   const dLon = half / (111320 * Math.cos(c.lat * Math.PI/180));
   const b = [[c.lat - dLat, c.lng - dLon], [c.lat + dLat, c.lng + dLon]];

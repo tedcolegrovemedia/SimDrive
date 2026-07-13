@@ -4,15 +4,23 @@
 // scope (the original single-file behaviour), with THREE/addons exposed as globals.
 
 // ---- Minimap (car-nav style: heading-up, zoomed, rotates with the car) ----
+// Redrawn from the tiles currently in the scene whenever the ring changes; the
+// canvas bounds follow the live tile extents (the world has no fixed size now).
 let miniData = null;
-function buildMinimap(roadLines, gsz) {
-  const PX = 0.42, minX = -gsz/2, minZ = -gsz/2;
-  const size = Math.round(Math.min(900, Math.max(320, gsz * PX)));
-  const off = document.createElement('canvas'); off.width = off.height = size;
+function rebuildMinimap(liveTiles) {
+  if (!liveTiles.length) { miniData = null; return; }
+  const PX = 0.42;
+  let minX = 1e18, minZ = 1e18, maxX = -1e18, maxZ = -1e18;
+  for (const t of liveTiles) {
+    if (t.bounds.x0 < minX) minX = t.bounds.x0; if (t.bounds.x1 > maxX) maxX = t.bounds.x1;
+    if (t.bounds.z0 < minZ) minZ = t.bounds.z0; if (t.bounds.z1 > maxZ) maxZ = t.bounds.z1;
+  }
+  const w = Math.round((maxX - minX) * PX), h = Math.round((maxZ - minZ) * PX);
+  const off = document.createElement('canvas'); off.width = w; off.height = h;
   const g = off.getContext('2d');
-  g.fillStyle = '#0c1018'; g.fillRect(0, 0, size, size);
+  g.fillStyle = '#0c1018'; g.fillRect(0, 0, w, h);
   g.strokeStyle = '#7c8aa0'; g.lineWidth = 2.4; g.lineJoin = 'round'; g.lineCap = 'round';
-  for (const line of roadLines) {
+  for (const t of liveTiles) for (const line of t.roadLines) {
     g.beginPath(); g.moveTo((line[0].x - minX)*PX, (line[0].z - minZ)*PX);
     for (let i = 1; i < line.length; i++) g.lineTo((line[i].x - minX)*PX, (line[i].z - minZ)*PX);
     g.stroke();
